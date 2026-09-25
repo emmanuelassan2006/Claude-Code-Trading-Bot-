@@ -1,0 +1,25 @@
+[project]
+name = "pmbot"
+version = "0.1.0"
+description = "Polymarket US crypto Up/Down monitor and (later) arbitrage bot"
+requires-python = ">=3.11"
+dependencies = [
+    "polymarket-us>=1.0.2",  # official SDK; brings httpx, pynacl, websockets
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+pmbot = "pmbot.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pmbot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

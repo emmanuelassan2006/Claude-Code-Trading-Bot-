@@ -1,0 +1,93 @@
+# pmbot — Polymarket US crypto Up/Down monitor (→ arbitrage bot)
+
+Personal bot for **Polymarket US** (the CFTC-regulated exchange, `polymarket.us`),
+not polymarket.com. Target: short-duration crypto "Up or Down" windows.
+
+**Current status: Phase 1 (monitor + research). This code cannot place,
+modify or cancel orders. There are no trading endpoints in it at all.**
+Phase 2 (fees → strategies, risk, dry-run, ledger) and Phase 3 (live orders
+behind a double opt-in) come after review.
+
+Read `docs/RESEARCH.md` first: it covers the API, fees, and one important
+structural finding. Polymarket US has **one order book per market**. If a
+window is one market, "Down" is the short side of "Up", so
+`ask_up + ask_down = 1 + spread`. Taker "arbitrage" then can't exist, and
+maker "arbitrage" is two-sided market making. The monitor detects which
+layout each window uses and measures both.
+
+## Setup
+
+```bash
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+cp config.example.toml config.toml     # optional; defaults are built in
+cp .env.example .env                   # then fill in your key locally
+pytest                                 # all tests are offline
+```
+
+`.env` (git-ignored) holds `POLYMARKET_KEY_ID` / `POLYMARKET_SECRET_KEY` from
+<https://polymarket.us/developer>. Polymarket US requires auth even for the
+market-data WebSocket, so Phase 1 needs a key. Phase 1 only uses it to open that
+socket. Without a key, the monitor falls back to REST polling of public books.
+Secrets are never logged: the `Secret` wrapper masks them and a log filter
+redacts them.
+
+First, confirm what's listed (public, read-only, no key):
+
+```bash
+python scripts/probe_markets.py        # writes probe_output.json (no secrets)
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `pmbot monitor [-v]` | Discover windows, subscribe to books + trades, stream Chainlink prices, record everything to SQLite. |
+| `pmbot report [--since 24h] [--min-edge 0.02] [--horizon 60] [--csv DIR] [--json]` | Gap/spread/fill-proxy/tape stats per asset and duration, plus price-to-beat rule accuracy. |
+| `pmbot analyze-tape [--out reports/tape.csv]` | Summarize the anonymous US trade tape. |
+| `pmbot analyze-wallet 0xADDR [--out reports/wallet.csv]` | Read-only analysis of a **public polymarket.com** wallet (US accounts are not public). |
+| `pmbot kill` | Create the `KILL` file. A running monitor stops within 1 s, and nothing starts while it exists. |
+
+### What the monitor records
+
+- **Taker gaps.** An episode is logged every time `ask_up + ask_down + taker fees < 1 - min_gap`. Each episode records max gap, executable size and profit (both ladders walked, rounded fees), depth on both sides, seconds to close, and how long it lasted (ms).
+- **Book samples** (1/s per window by default): best bid/ask and size on both sides, taker pair cost, maker edge `1 - bid_up - bid_down`, Chainlink price, and price to beat.
+- **Maker fill proxy** (in the report). For each moment the maker edge ≥ `--min-edge`, a quote joining both best bids counts as filled only if a later trade prints *through* the price within `--horizon` seconds. This is a conservative queue assumption. The report shows both-legs vs one-leg-only rates; one-leg-only is the leg risk.
+- **Trades** (the public tape).
+- **Price to beat.** No API returns it. At each window's open and close the monitor stores four candidate references from the Chainlink stream: first tick after, last tick before, TWAP ending at, and TWAP starting at the boundary. It then records the settlement. The report scores which rule matches reality.
+
+## Configuration
+
+Everything tunable is in `config.toml`. `config.example.toml` lists every key
+with its default, including fee rate, rebate rate, rounding, tick, minimum
+size, assets, durations, rate limits, and the TWAP windows. Unknown keys are
+rejected.
+
+## Running 24/7
+
+- **Linux VPS:** `deploy/pmbot-monitor.service` (systemd; restarts on failure, but not while `KILL` exists).
+- **Laptop:** `nohup pmbot monitor >/dev/null 2>&1 &` or tmux/screen.
+- **Logs:** `logs/monitor.log`, size-rotated by the app (20 MB × 10 by default).
+- **Data:** `data/pmbot.db` (SQLite, WAL mode).
+
+## Kill switch
+
+`pmbot kill` (or `touch KILL`) stops the process. Delete `KILL` to allow a restart.
+In Phase 2+ the same switch will also cancel all open orders first.
+
+## Layout
+
+```
+pmbot/config.py      config.toml + .env (Secret wrapper)
+pmbot/fees.py        THE fee function (taker/maker/rebate, banker's rounding, multi-fill cap)
+pmbot/book.py        local books; Up/Down views for single- or two-market windows
+pmbot/edge.py        taker pair quote (walks both ladders), maker pair edge
+pmbot/discovery.py   window discovery + classification (asset, duration, layout)
+pmbot/marketdata.py  read-only gateway REST + markets WebSocket (reconnect, REST fallback)
+pmbot/feeds/chainlink.py  live Chainlink stream, TWAP, price-to-beat candidates
+pmbot/monitor.py     Phase 1 engine (evaluates on every book update)
+pmbot/store.py       SQLite
+pmbot/reports.py     report + CSV export
+pmbot/wallet.py      tape + public-wallet analysis
+pmbot/cli.py         entry point
+```

@@ -1,0 +1,67 @@
+# Copy to config.toml and edit. Every key is optional; omitted keys use the
+# defaults in pmbot/config.py. Secrets do NOT go here - they go in .env.
+
+dry_run = true          # Phase 1 never trades regardless.
+
+[fees]                  # docs.polymarket.us/fees
+taker_rate = 0.06       # taker fee = rate * shares * p * (1 - p)
+maker_fee_rate = 0.0
+maker_rebate_rate = 0.0125   # UNVERIFIED: sources say 0.0125 or 25% of taker (0.015)
+rounding_increment = 0.01
+rounding_mode = "half_even"  # banker's rounding, per fill
+cap_cumulative = true        # multi-fill taker orders capped at round(total exact fee)
+
+[markets]
+assets = ["BTC", "ETH", "SOL", "XRP"]
+durations = ["5m", "15m", "1h"]
+search_queries = ["up or down"]
+title_keywords = ["up or down", "updown"]
+tick_size = 0.01
+min_order_size = 1           # UNVERIFIED for Polymarket US
+discovery_interval_s = 20.0
+lookahead_s = 120.0
+post_close_grace_s = 5.0
+
+[monitor]
+min_gap = 0.0                # log taker gaps when cost < 1 - min_gap
+max_depth_levels = 10
+spread_sample_interval_s = 1.0
+record_trades = true
+book_poll_interval_s = 2.0   # REST fallback when the WebSocket is down
+ws_stale_after_s = 30.0
+settlement_poll_s = 900.0
+
+[chainlink]
+source = "rtds"              # "rtds" (public relay) or "none"
+rtds_url = "wss://ws-live-data.polymarket.com"
+rtds_topic = "crypto_prices_chainlink"
+ptb_rule = "twap_ending"
+history_s = 7200.0
+
+[chainlink.symbols]
+BTC = "btc/usd"
+ETH = "eth/usd"
+SOL = "sol/usd"
+XRP = "xrp/usd"
+
+[chainlink.twap_window_s]
+5m = 30
+15m = 60
+1h = 60
+4h = 60
+
+[api]
+gateway_url = "https://gateway.polymarket.us"
+api_url = "https://api.polymarket.us"
+rest_rate_per_s = 10.0       # documented limit: 20 req/s per key, all endpoints
+rest_burst = 10
+timeout_s = 10.0
+reconnect_initial_s = 1.0
+reconnect_max_s = 60.0
+
+[paths]
+db_path = "data/pmbot.db"
+log_dir = "logs"
+log_max_bytes = 20000000
+log_backups = 10
+kill_file = "KILL"

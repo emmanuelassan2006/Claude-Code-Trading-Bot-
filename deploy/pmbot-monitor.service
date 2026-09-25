@@ -1,0 +1,26 @@
+# systemd unit for the Phase 1 monitor (Linux VPS).
+# Install:
+#   sudo cp deploy/pmbot-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pmbot-monitor
+# Logs: logs/monitor.log (size-rotated by the app) and `journalctl -u pmbot-monitor`.
+[Unit]
+Description=pmbot Polymarket US monitor (Phase 1, no trading)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pmbot
+WorkingDirectory=/opt/pmbot
+ExecStart=/opt/pmbot/.venv/bin/pmbot monitor
+Restart=on-failure
+RestartSec=10
+# The app exits with code 2 when the KILL file exists; don't restart-loop on it.
+RestartPreventExitStatus=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pmbot
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
-# Polymarket US — Research Findings (pre-Phase 1)
+# Polymarket US — Research Findings
 
-Status: **awaiting owner approval**. No bot code has been written yet.
+Status: Phase 1 (monitor + research) built on these findings; awaiting owner review. Items marked UNVERIFIED are still unverified.
 
 Sources: the official Python SDK `polymarket-us` 1.0.2 (source read directly from
 PyPI; repo `github.com/Polymarket/polymarket-us-python`) and search-indexed
