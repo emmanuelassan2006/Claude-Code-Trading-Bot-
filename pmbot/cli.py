@@ -155,6 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
     cal.add_argument("--every", type=float, default=10.0, help="seconds between samples")
 
+    ll = sub.add_parser("leadlag", help="does the book lag BTC moves enough to trade?")
+    ll.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
+    ll.add_argument("--lookback", type=int, default=5, help="seconds of move to compare")
+    ll.add_argument("--horizon", type=int, default=10, help="seconds to measure follow-through")
+
     sub.add_parser("kill", help="create the kill file (running processes stop)")
 
     args = p.parse_args(argv)
@@ -197,6 +202,13 @@ def main(argv: list[str] | None = None) -> int:
 
     store = Store(cfg.paths.db_path, mode="monitor")
     try:
+        if args.cmd == "leadlag":
+            from pmbot.leadlag import analyze
+            from pmbot.leadlag import render as render_ll
+
+            print(render_ll(analyze(cfg, store, _parse_since(args.since), args.lookback,
+                                    args.horizon)))
+            return 0
         if args.cmd == "calibrate":
             from pmbot.calibrate import collect, render, summarize
 
