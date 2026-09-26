@@ -82,3 +82,38 @@ def test_discoverer_survives_fetch_errors():
         raise RuntimeError("boom")
 
     assert asyncio.run(Discoverer(CFG, fetch).poll(0)) == []
+
+
+def us_event(**kw):
+    # Shape observed from the live Polymarket US gateway (2026-09-26 probe).
+    base = {"slug": "btc-updown-15m-2026-09-26-0245z", "title": "BTC Up or Down: 15 min",
+            "startTime": "2026-09-26T02:45:00Z", "endTime": None,
+            "markets": [{"slug": "cpc-btc-updown-15m-2026-09-26-0245z", "outcome": None,
+                         "title": "BTC Up or Down: 15 min"}]}
+    base.update(kw)
+    return base
+
+
+def test_live_us_15m_shape():
+    w = classify_event(us_event(), CFG)
+    assert w and w.structure == "single" and w.long_is_up
+    assert w.duration == "15m" and w.asset == "BTC"
+    assert w.start_ts == parse_ts("2026-09-26T02:45:00Z")
+    assert w.end_ts - w.start_ts == 900
+    assert w.up_slug == "cpc-btc-updown-15m-2026-09-26-0245z"
+
+
+def test_live_us_1h_shape_and_slug_time_fallback():
+    ev1h = us_event(slug="btc-updown-1h-2026-09-26-0200z", title="BTC Up or Down: 60 min",
+                    startTime=None,
+                    markets=[{"slug": "cpc-btc-updown-1h-2026-09-26-0200z",
+                              "title": "BTC Up or Down: 60 min"}])
+    w = classify_event(ev1h, CFG)
+    assert w and w.duration == "1h"
+    assert w.start_ts == parse_ts("2026-09-26T02:00:00Z") and w.end_ts - w.start_ts == 3600
+
+
+def test_duration_from_title():
+    from pmbot.discovery import detect_duration
+    assert detect_duration(None, None, "x", "BTC Up or Down: 60 min") == "1h"
+    assert detect_duration(None, None, "x", "BTC Up or Down: 5 min") == "5m"

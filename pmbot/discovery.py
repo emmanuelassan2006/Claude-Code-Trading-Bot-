@@ -30,6 +30,20 @@ ASSET_ALIASES: dict[str, tuple[str, ...]] = {
 DURATION_SECONDS = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 _SLUG_DURATION = re.compile(r"(?:^|-)(5m|15m|1h|4h|1d|hourly|daily)(?:-|$)")
 _SLUG_TS = re.compile(r"-(\d{10})(?:$|-)")
+# Polymarket US: btc-updown-15m-2026-09-26-0245z (window start, UTC)
+_SLUG_ISO = re.compile(r"-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})z(?:$|-)")
+_TITLE_MIN = re.compile(r"(\d+)\s*(?:min|minute)")
+_MINUTES = {5: "5m", 15: "15m", 60: "1h", 240: "4h"}
+
+
+def slug_start_ts(slug: str) -> float | None:
+    """Window start encoded in the slug (US ISO-ish form or a unix timestamp)."""
+    m = _SLUG_ISO.search(slug.lower())
+    if m:
+        y, mo, d, h, mi = (int(x) for x in m.groups())
+        return datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp()
+    m = _SLUG_TS.search(slug)
+    return float(m.group(1)) if m else None
 
 
 @dataclass
@@ -80,7 +94,8 @@ def detect_asset(text: str, allowed: list[str]) -> str | None:
     return None
 
 
-def detect_duration(start: float | None, end: float | None, slug: str) -> str | None:
+def detect_duration(start: float | None, end: float | None, slug: str,
+                    title: str = "") -> str | None:
     if start is not None and end is not None:
         span = round(end - start)
         for name, secs in DURATION_SECONDS.items():
@@ -89,6 +104,9 @@ def detect_duration(start: float | None, end: float | None, slug: str) -> str | 
     m = _SLUG_DURATION.search(slug.lower())
     if m:
         return {"hourly": "1h", "daily": "1d"}.get(m.group(1), m.group(1))
+    m = _TITLE_MIN.search(title.lower())
+    if m:
+        return _MINUTES.get(int(m.group(1)))
     return None
 
 
@@ -125,20 +143,24 @@ def classify_event(event: dict[str, Any], cfg: MarketsConfig) -> Window | None:
     markets = [m for m in event.get("markets") or [] if m.get("slug")]
     start = parse_ts(event.get("startTime") or event.get("startDate"))
     end = parse_ts(event.get("endTime") or event.get("endDate"))
-    duration = detect_duration(start, end, slug)
-    if end is None and duration:
-        m = _SLUG_TS.search(slug)
-        if m:
-            start = float(m.group(1))
+    duration = detect_duration(start, end, slug, title)
+    if start is None:
+        start = slug_start_ts(slug)
+    if duration:
+        if end is None and start is not None:
             end = start + DURATION_SECONDS[duration]
-    if start is None and end is not None and duration:
-        start = end - DURATION_SECONDS[duration]
+        elif start is None and end is not None:
+            start = end - DURATION_SECONDS[duration]
     if duration is None or duration not in cfg.durations or start is None or end is None:
         return None
 
     if len(markets) == 1:
         m = markets[0]
         side = _side_of(m)
+        if side is None:
+            # e.g. market titled "BTC Up or Down: 15 min" with no outcome field:
+            # assume long/YES = Up (UNVERIFIED; check the market description).
+            log.info("assuming long=Up for single market %s", m["slug"])
         return Window(slug, asset, duration, start, end, "single", m["slug"], None,
                       long_is_up=(side != "down"), title=title, raw_markets=markets)
     if len(markets) == 2:
@@ -166,7 +188,7 @@ class Discoverer:
         calls: list[tuple[str, dict[str, Any]]] = [
             ("/v1/events", {"active": True, "closed": False, "limit": 200}),
         ]
-        calls += [("/v1/search", {"query": q, "status": "active", "limit": 100})
+        calls += [("/v1/search", {"query": q, "limit": 100})
                   for q in self.cfg.search_queries]
         for path, params in calls:
             try:

@@ -10,6 +10,21 @@ marked **UNVERIFIED** must be confirmed (e.g. with `scripts/probe_markets.py`).
 
 ---
 
+## 0. CONFIRMED from the live gateway (owner's probe, 2026-09-26)
+
+- Crypto Up/Down on Polymarket US is **BTC only**, in **15-minute and 60-minute**
+  windows. **No 5-minute windows**, and no ETH/SOL/XRP Up/Down.
+- Event `btc-updown-15m-2026-09-26-0245z` "BTC Up or Down: 15 min" has
+  `startTime` = 02:45Z and **no `endTime`**. The slug suffix is the window start
+  in UTC (`YYYY-MM-DD-HHMMz`). The 60-minute window uses `btc-updown-1h-...` and the title "60 min".
+- **Each window is ONE market** (`cpc-btc-updown-15m-...`) with no `outcome`
+  field. It is the "single" structure: one YES book, where Up = long (assumed; to be
+  confirmed from the market description), and Down = short.
+- Found via `/v1/search?query=up or down`. They do not appear in the first 500
+  `/v1/events` results.
+- Book prices come back with 4 decimals (e.g. `0.9740`), so ticks may be finer than $0.01.
+- Public gateway GETs work unauthenticated from a US residential connection.
+
 ## 1. The finding that changes the design: one book per market
 
 Polymarket US is a CFTC DCM with a **single instrument per market** (the YES /

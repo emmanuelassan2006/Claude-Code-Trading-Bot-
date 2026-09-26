@@ -120,21 +120,37 @@ def main():
         print(f"    - {m.get('title')!r} slug={m.get('slug')} outcome={m.get('outcome')} "
               f"event={m.get('eventSlug')}")
 
-    sample = next((m for e in crypto_events for m in e.get("markets") or [] if m.get("slug")),
-                  crypto_markets[0] if crypto_markets else None)
-    if sample:
-        slug = sample["slug"]
-        print(f"\n5) Deep-dive on market {slug}")
-        out["sample_market"] = get(f"/v1/market/slug/{slug}")
-        out["sample_book"] = get(f"/v1/markets/{slug}/book")
-        out["sample_bbo"] = get(f"/v1/markets/{slug}/bbo")
-        desc = (out["sample_market"].get("market") or {}).get("description")
-        if desc:
-            print("    description:", desc[:600].replace("\n", " "))
-        md = out["sample_book"].get("marketData") or {}
-        print(f"    book: {len(md.get('bids') or [])} bids, {len(md.get('offers') or [])} offers, "
-              f"top bid={((md.get('bids') or [{}])[0]).get('px')} "
-              f"top offer={((md.get('offers') or [{}])[0]).get('px')} state={md.get('state')}")
+    updown = [e for e in crypto_events
+              if "up or down" in f"{e.get('title')} {e.get('slug')}".lower()
+              or "updown" in str(e.get("slug"))]
+    extra = get("/v1/search", {"query": "BTC Up or Down", "limit": 50}).get("events", []) or []
+    for e in extra:
+        if e.get("slug") and e["slug"] not in {u.get("slug") for u in updown}:
+            updown.append(e)
+    print(f"\n5) Up/Down windows found: {len(updown)}")
+    for e in updown:
+        print(brief(e))
+    out["updown_events"] = updown
+
+    for e in updown[:2]:
+        mk = next((m for m in e.get("markets") or [] if m.get("slug")), None)
+        if not mk:
+            continue
+        slug = mk["slug"]
+        print(f"\n6) Deep-dive on {slug}")
+        market = get(f"/v1/market/slug/{slug}")
+        book = get(f"/v1/markets/{slug}/book")
+        bbo = get(f"/v1/markets/{slug}/bbo")
+        out.setdefault("updown_deep_dive", {})[slug] = {"market": market, "book": book, "bbo": bbo}
+        m = market.get("market") or {}
+        print("    market fields:", {k: v for k, v in m.items() if k != "description"})
+        print("    description:", (m.get("description") or "(none)").replace("\n", " "))
+        md = book.get("marketData") or {}
+        bids = [(b.get("px", {}).get("value"), b.get("qty")) for b in (md.get("bids") or [])[:5]]
+        offers = [(o.get("px", {}).get("value"), o.get("qty")) for o in (md.get("offers") or [])[:5]]
+        print(f"    state={md.get('state')} bids(top5)={bids}")
+        print(f"    offers(top5)={offers}")
+        print(f"    bbo={bbo.get('marketData')}")
 
     out.update({
         "request_log": LOG,
