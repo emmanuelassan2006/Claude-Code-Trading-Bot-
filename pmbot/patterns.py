@@ -427,12 +427,14 @@ def render_favorite(res: dict[str, Any]) -> str:
                 L.append(f"  {r['lo']:.2f}-{r['hi']:.2f} {r['secs_left']:>6g}  no trades")
                 continue
             t = "-" if r["t_stat"] is None else f"{r['t_stat']:+.1f}"
+            halves = "/".join("-" if v is None else f"{v:+.3f}"
+                              for v in (r["first_half_edge"], r["second_half_edge"]))
             L.append(
                 f"  {r['lo']:.2f}-{r['hi']:.2f} {r['secs_left']:>6g}  {r['n']:>6} {r['losses']:>4} "
                 f"{100 * r['loss_rate']:>5.1f} {100 * r['breakeven_loss_rate']:>5.1f} "
                 f"{100 * r['loss_rate_95_upper']:>6.1f}  {r['edge_per_share']:+.4f} {t:>5} "
                 f"{r['edge_at_upper_loss_rate']:+.3f}  {r['pnl_per_20_shares_total']:+7.2f}  "
-                f"{r['first_half_edge']:+.3f}/{r['second_half_edge']:+.3f}  "
+                f"{halves:>13}  "
                 f"{r['thin_top_pct']:>5.0f}")
     L += ["",
           "Columns: loss% = how often the favourite lost; b/e% = loss rate at which P&L is zero "

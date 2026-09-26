@@ -191,3 +191,10 @@ def test_favorite_stats_and_bound():
     assert st["edge_per_share"] < 0             # 90% wins at 0.925 all-in loses
     res = favorite(CFG, s)
     assert "15m" in res["groups"] and "b/e%" in render_favorite(res)
+
+
+def test_favorite_renders_single_trade():
+    from pmbot.patterns import favorite, render_favorite
+
+    out = render_favorite(favorite(CFG, fav_store([("up", 0.90, 0.92)])))
+    assert "-/+0.075" in out
