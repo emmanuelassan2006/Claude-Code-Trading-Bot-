@@ -125,6 +125,25 @@ above the price, which fill only on large swings. Tests, all read-only:
 Build a paper strategy only if an edge is positive by more than ~2 standard errors
 across many windows.
 
+### Results (2026-09-26)
+
+- **Wallet** (latest 10,000 fills, 1,694 markets, all resolved): +$1,020 on ~$77k bought
+  (≈1.3% of volume, before polymarket.com fees and rebates). Makers earned +0.9¢/share and
+  takers ~0. Markets where it bought **both** sides lost $871; one-sided markets made $1,891.
+  Edge by price bucket alternates between +1.6¢ and −1.5¢, which is about the level of noise.
+  Fills in the first 20% of the window made +2.3¢/share, roughly 1.5 standard errors.
+  It looks like a market maker earning a thin spread, not a transferable signal.
+- **US longshot** (42 × 15m, 11 × 1h windows): cheap sides are **overpriced**. Asks ≤15¢
+  in the second half won 3.3% against a 5.8¢ average price (15m) and 0/38 on the 1h. Buying longshots
+  loses. The mirror image: sides priced ≥0.75 won more often than their price in both durations
+  (e.g. 15m 0.95–1.00: 101/101 wins at an average of 0.978, +2.1¢ after the fee). The sample is small,
+  though. Zero losses in about 40 windows still allows a true loss rate of about 7%, and that would erase the edge.
+- **US ladder** (54 windows): −$17.80, only 6% of windows positive. Every level loses except
+  0.85 and 0.95, which is the same favourites effect. **The ladder is closed.**
+
+The one consistent thread: **favourites (≥0.75–0.85) win slightly more often than priced**, in all three
+tests. This needs far more windows before it is trusted, because the risk is rare, large losses.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every
