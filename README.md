@@ -72,6 +72,16 @@ with its default, including fee rate, rebate rate, rounding, tick, minimum
 size, assets, durations, rate limits, and the TWAP windows. Unknown keys are
 rejected.
 
+## Windows
+
+Same steps in **PowerShell**, with these differences:
+- Install Python 3.11+ from python.org and tick **"Add python.exe to PATH"**. Install Git for Windows.
+- Create the venv with `py -m venv .venv` and activate it with `.venv\Scripts\Activate.ps1`. If PowerShell blocks
+  the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+- Create `.env` with `copy .env.example .env`, then `notepad .env`.
+- Stop with **Ctrl+C** (clean shutdown) or `pmbot kill` from a second window. `del KILL` allows a restart.
+- Keep the PC awake while it runs: Settings → System → Power → Sleep = Never.
+
 ## Running 24/7
 
 - **Linux VPS:** `deploy/pmbot-monitor.service` (systemd; restarts on failure, but not while `KILL` exists).

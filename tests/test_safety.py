@@ -52,3 +52,4 @@ def test_config_decimal_coercion(tmp_path):
 def test_env_is_gitignored():
     gi = (PKG.parent / ".gitignore").read_text().splitlines()
     assert ".env" in gi
+

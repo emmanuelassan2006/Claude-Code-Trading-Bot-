@@ -66,8 +66,10 @@ async def _run_monitor(cfg_path: str, verbose: bool, paper: bool = False) -> int
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:  # Windows
-            pass
+        except NotImplementedError:
+            # Windows: no loop signal handlers; a plain handler still lets Ctrl+C
+            # trigger the same clean shutdown instead of a KeyboardInterrupt.
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
 
     log.info("%s starting. api_key=%s price_feed=%s",
              "PAPER TRADING (dry run, simulated orders only)" if paper else "monitor (no trading)",
