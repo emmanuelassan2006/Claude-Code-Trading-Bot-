@@ -109,6 +109,22 @@ faster than a home connection to Coinbase + Kraken.** Faster data (licensed BRTI
 could at best remove our ~1 s disadvantage; an edge would require being *ahead* of those
 traders. The lead-lag idea is closed.
 
+## Patterns from a public polymarket.com wallet (98euf98a, under test)
+
+Observed (Sept 21-26 2026, ~1,000 markets): 5m BTC/ETH Up/Down only, nearly every
+window; mostly maker fills on a 5¢ grid (0.05, 0.15, ... 0.95) on **both** sides;
+entries from the first seconds of the window; small 1-15¢ buys late in the window.
+Paired cost is often above $1, so this is not locked-in arbitrage.
+
+Translated to US (one book): a two-sided bid ladder = resting bids below and offers
+above the price, which fill only on large swings. Tests, all read-only:
+1. `pmbot analyze-wallet` shows whether the wallet actually profits, by price and time.
+2. `pmbot longshot` checks whether cheap late contracts on US win more often than their price.
+3. `pmbot ladder` replays the ladder on the recorded US tape.
+
+Build a paper strategy only if an edge is positive by more than ~2 standard errors
+across many windows.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every

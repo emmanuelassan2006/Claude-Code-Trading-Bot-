@@ -53,10 +53,12 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 | `pmbot backtest [--since 24h] [--out file.db]` | Replay recorded monitor data through the exact same strategy and risk engine. |
 | `pmbot calibrate [--since 24h]` | Is the model a better predictor than the market? Brier score, log loss, and who was right when they disagreed. **Check this before trusting any edge.** |
 | `pmbot leadlag [--lookback 5] [--horizon 10]` | Does the book lag BTC moves? Cross-correlation by delay, plus simulated taker P&L (real ask/bid + fee) when the book hasn't caught up. No trading. |
+| `pmbot longshot [--since 24h]` | Do cheap (≤15¢) or late contracts win more often than their price? Win rate vs price by checkpoint, edge after the taker fee. No trading. |
+| `pmbot ladder [--levels 0.05,0.15,...] [--shares 1] [--place-until S]` | Replay a two-sided resting-bid ladder (the 98euf98a wallet pattern) on the recorded US tape: fills on trade-through, held to resolution. No trading. |
 | `pmbot report --strategy [--since 24h]` | Paper-trading P&L by component, market and day; fees, rebates, markouts (adverse selection), carried inventory, drawdown. |
 | `pmbot report [--since 24h] [--min-edge 0.02] [--horizon 60] [--csv DIR] [--json]` | Gap/spread/fill-proxy/tape stats per asset and duration, plus price-to-beat rule accuracy. |
 | `pmbot analyze-tape [--out reports/tape.csv]` | Summarize the anonymous US trade tape. |
-| `pmbot analyze-wallet 0xADDR [--out reports/wallet.csv]` | Read-only analysis of a **public polymarket.com** wallet (US accounts are not public). |
+| `pmbot analyze-wallet 0xADDR [--out reports/wallet.csv]` | Read-only analysis of a **public polymarket.com** wallet (US accounts are not public): per-market P&L, plus win rate vs price, time in window and maker/taker for every fill held to resolution. `resolution_lookup` shows which sources answered and any errors. |
 | `pmbot kill` | Create the `KILL` file. A running monitor stops within 1 s, and nothing starts while it exists. |
 
 ### What the monitor records
@@ -118,5 +120,6 @@ pmbot/engine.py      strategy -> risk -> executor -> ledger; shared by paper/bac
 pmbot/backtest.py    replay recorded data through the engine
 pmbot/reports.py     reports + CSV export
 pmbot/wallet.py      tape + public-wallet analysis
+pmbot/patterns.py    longshot check + bid-ladder replay on recorded US data
 pmbot/cli.py         entry point
 ```

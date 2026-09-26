@@ -1,5 +1,5 @@
-"""Command line: `pmbot monitor | run | backtest | report | analyze-tape |
-analyze-wallet | kill`.
+"""Command line: `pmbot monitor | run | backtest | report | calibrate | leadlag |
+longshot | ladder | analyze-tape | analyze-wallet | kill`.
 
 No command can place, modify or cancel a real order: `run` paper-trades
 against a simulated exchange, and `run --live` is refused (Phase 3).
@@ -160,6 +160,16 @@ def main(argv: list[str] | None = None) -> int:
     ll.add_argument("--lookback", type=int, default=5, help="seconds of move to compare")
     ll.add_argument("--horizon", type=int, default=10, help="seconds to measure follow-through")
 
+    ls = sub.add_parser("longshot", help="do cheap/late contracts win more than their price?")
+    ls.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
+
+    lad = sub.add_parser("ladder", help="replay a two-sided resting-bid ladder on the US tape")
+    lad.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
+    lad.add_argument("--levels", help="comma-separated bid prices (default 0.05,0.15,...,0.95)")
+    lad.add_argument("--shares", type=float, default=1.0, help="shares per level")
+    lad.add_argument("--place-until", type=float, default=None,
+                     help="stop placing new levels this many seconds into the window")
+
     sub.add_parser("kill", help="create the kill file (running processes stop)")
 
     args = p.parse_args(argv)
@@ -195,13 +205,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "analyze-wallet":
         from pmbot.wallet import analyze_wallet
 
-        summary = analyze_wallet(args.address, args.out)
+        print("fetching trades and market resolutions (read-only; ~1 min per 300 markets)...")
+        summary = analyze_wallet(args.address, args.out, progress=lambda i, n: print(
+            f"  resolutions {i}/{n}", flush=True))
         print(json.dumps(summary, indent=2))
         print(f"per-market CSV: {args.out}")
         return 0
 
     store = Store(cfg.paths.db_path, mode="monitor")
     try:
+        if args.cmd == "longshot":
+            from pmbot.patterns import longshot, render_longshot
+
+            print(render_longshot(longshot(cfg, store, _parse_since(args.since))))
+            return 0
+        if args.cmd == "ladder":
+            from pmbot.patterns import ladder, render_ladder
+
+            levels = [float(x) for x in args.levels.split(",")] if args.levels else None
+            print(render_ladder(ladder(store, _parse_since(args.since), levels, args.shares,
+                                       place_until_s=args.place_until)))
+            return 0
         if args.cmd == "leadlag":
             from pmbot.leadlag import analyze
             from pmbot.leadlag import render as render_ll

@@ -27,6 +27,7 @@ from pmbot.store import Store
 
 DATA_API = "https://data-api.polymarket.com"
 GAMMA_API = "https://gamma-api.polymarket.com"
+CLOB_API = "https://clob.polymarket.com"  # public market metadata only
 _UPDOWN = re.compile(r"-updown-(5m|15m|1h|4h)-(\d{9,})$")
 _DUR_S = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400}
 
@@ -36,7 +37,13 @@ Getter = Callable[[str, dict[str, Any]], Any]
 def _http_get(url: str, params: dict[str, Any]) -> Any:
     import httpx
 
-    r = httpx.get(url, params=params, timeout=20)
+    import time
+
+    for attempt in range(4):          # GETs are idempotent; back off on rate limits
+        r = httpx.get(url, params=params, timeout=20)
+        if r.status_code != 429 or attempt == 3:
+            break
+        time.sleep(2 ** attempt)
     r.raise_for_status()
     return r.json()
 
@@ -80,18 +87,90 @@ def _trade_key(t: dict[str, Any]) -> tuple[Any, ...]:
     return (t.get("transactionHash"), t.get("asset"), t.get("size"), t.get("price"), t.get("side"))
 
 
-def fetch_resolutions(slugs: list[str], get: Getter = _http_get) -> dict[str, str | None]:
-    """slug -> winning outcome name (e.g. 'Up') for closed markets."""
-    out: dict[str, str | None] = {}
-    for slug in slugs:
-        try:
-            res = get(f"{GAMMA_API}/markets", {"slug": slug})
-        except Exception:
-            out[slug] = None
-            continue
-        m = res[0] if isinstance(res, list) and res else None
-        out[slug] = _winner(m) if m else None
-    return out
+def _is_winner_row(x: Any) -> bool:
+    return x is True or str(x).lower() == "true"
+
+
+def _clob_winner(m: Any) -> str | None:
+    """CLOB market: tokens[] carry a `winner` flag once the market resolves."""
+    if not isinstance(m, dict):
+        return None
+    for tok in m.get("tokens") or []:
+        if isinstance(tok, dict) and _is_winner_row(tok.get("winner")):
+            return tok.get("outcome")
+    return None
+
+
+def _first_market(res: Any) -> dict[str, Any] | None:
+    if isinstance(res, dict):
+        res = res.get("data") or res.get("markets") or [res]
+    return res[0] if isinstance(res, list) and res and isinstance(res[0], dict) else None
+
+
+def fetch_resolutions(markets: dict[str, str | None], get: Getter = _http_get,
+                      pause_s: float = 0.15, progress: Callable[[int, int], None] | None = None
+                      ) -> tuple[dict[str, str | None], dict[str, Any]]:
+    """slug -> winning outcome name (e.g. 'Up'), plus lookup diagnostics.
+
+    `markets` maps slug -> conditionId. Sources are tried in order until one
+    gives a winner: gamma /markets?slug, the same with closed=true (gamma can
+    hide closed markets by default), gamma /events?slug, and the public CLOB
+    market record by conditionId (its tokens carry a `winner` flag).
+    Read-only public GETs, throttled; errors are counted, not silently dropped.
+    """
+    import time
+
+    def sources(slug: str, cid: str | None) -> list[tuple[str, Callable[[], str | None]]]:
+        out: list[tuple[str, Callable[[], str | None]]] = [
+            ("gamma_slug", lambda: _winner(_first_market(
+                get(f"{GAMMA_API}/markets", {"slug": slug})) or {})),
+            ("gamma_closed", lambda: _winner(_first_market(
+                get(f"{GAMMA_API}/markets", {"slug": slug, "closed": "true"})) or {})),
+            ("gamma_event", lambda: _winner(_first_market(
+                (_first_market(get(f"{GAMMA_API}/events", {"slug": slug})) or {})
+                .get("markets")) or {})),
+        ]
+        if cid:
+            out.append(("clob", lambda: _clob_winner(get(f"{CLOB_API}/markets/{cid}", {}))))
+        return out
+
+    winners: dict[str, str | None] = {}
+    found: dict[str, int] = defaultdict(int)
+    errors: dict[str, str] = {}
+    error_counts: dict[str, int] = defaultdict(int)
+    order = ["gamma_slug", "gamma_closed", "gamma_event", "clob"]
+    dropped: set[str] = set()
+    for i, (slug, cid) in enumerate(markets.items()):
+        winners[slug] = None
+        fns = dict(sources(slug, cid))
+        for name in [n for n in order if n in fns and n not in dropped]:
+            try:
+                w = fns[name]()
+            except Exception as e:  # noqa: BLE001 - diagnostics, keep going
+                error_counts[name] += 1
+                errors.setdefault(name, f"{type(e).__name__}: {e}"[:200])
+                if error_counts[name] >= 10 and not found[name]:
+                    dropped.add(name)        # consistently failing: stop asking it
+                w = None
+            if pause_s:
+                time.sleep(pause_s)
+            if w:
+                winners[slug] = w
+                found[name] += 1
+                order.remove(name)
+                order.insert(0, name)        # try what works first next time
+                break
+        if progress and (i + 1) % 50 == 0:
+            progress(i + 1, len(markets))
+    diag = {
+        "markets": len(markets),
+        "resolved": sum(1 for w in winners.values() if w),
+        "found_by": dict(found),
+        "errors_by_source": dict(error_counts),
+        "first_error_by_source": errors,
+        "dropped_sources": sorted(dropped),
+    }
+    return winners, diag
 
 
 def _winner(m: dict[str, Any]) -> str | None:
@@ -102,9 +181,13 @@ def _winner(m: dict[str, Any]) -> str | None:
         prices = [float(p) for p in (json.loads(prices) if isinstance(prices, str) else prices)]
     except (KeyError, ValueError, TypeError):
         return None
-    if not m.get("closed") or 1.0 not in prices:
+    if not prices or len(prices) != len(outcomes):
         return None
-    return outcomes[prices.index(1.0)]
+    resolved = m.get("closed") or str(m.get("umaResolutionStatus", "")).lower() == "resolved"
+    top = max(prices)
+    if not resolved or top < 0.99:
+        return None
+    return outcomes[prices.index(top)]
 
 
 def summarize_wallet(trades: list[dict[str, Any]], winners: dict[str, str | None]
@@ -187,11 +270,81 @@ def summarize_wallet(trades: list[dict[str, Any]], winners: dict[str, str | None
     return rows, summary
 
 
-def analyze_wallet(address: str, out_csv: str, get: Getter = _http_get
+PRICE_BUCKETS = [(0.0, 0.10), (0.10, 0.20), (0.20, 0.35), (0.35, 0.50), (0.50, 0.65),
+                 (0.65, 0.80), (0.80, 0.90), (0.90, 1.01)]
+PHASES = [(0.0, 0.2, "first 20%"), (0.2, 0.5, "20-50%"), (0.5, 0.8, "50-80%"),
+          (0.8, 1.01, "last 20%")]
+
+
+def _agg(items: list[tuple[float, float, float]]) -> dict[str, Any]:
+    """items: (shares, price, payout per share) -> win rate and edge per share."""
+    sh = sum(q for q, _, _ in items)
+    if sh <= 0:
+        return {"fills": len(items), "shares": 0}
+    cost = sum(q * p for q, p, _ in items)
+    paid = sum(q * w for q, _, w in items)
+    return {
+        "fills": len(items), "shares": round(sh, 2),
+        "avg_price": round(cost / sh, 4),
+        "win_rate_pct": round(100.0 * paid / sh, 1),
+        "edge_per_share": round((paid - cost) / sh, 4),
+        "pnl": round(paid - cost, 2),
+    }
+
+
+def fill_breakdown(trades: list[dict[str, Any]], winners: dict[str, str | None]
+                   ) -> dict[str, Any]:
+    """Every resolved BUY fill held to resolution: does buying at price p win
+    more than p of the time? Split by price, by time in the window, and by role.
+    edge_per_share = win rate - average price (before fees/rebates)."""
+    by_price: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+    by_phase: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+    by_role: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+    cheap_late: list[tuple[float, float, float]] = []
+    for t in trades:
+        slug = t.get("slug")
+        w = winners.get(slug) if slug else None
+        if not w or str(t.get("side", "")).upper() != "BUY":
+            continue
+        q, p = float(t.get("size", 0)), float(t.get("price", 0))
+        item = (q, p, 1.0 if str(t.get("outcome")) == w else 0.0)
+        for lo, hi in PRICE_BUCKETS:
+            if lo <= p < hi:
+                by_price[f"{lo:.2f}-{min(hi, 1.0):.2f}"].append(item)
+        by_role[t.get("_role", "?")].append(item)
+        win = window_of(slug)
+        if win and t.get("timestamp") is not None:
+            frac = (float(t["timestamp"]) - win[1]) / (win[2] - win[1])
+            for lo, hi, name in PHASES:
+                if lo <= frac < hi:
+                    by_phase[name].append(item)
+            if p <= 0.15 and frac >= 0.5:
+                cheap_late.append(item)
+    return {
+        "by_price": {k: _agg(v) for k, v in sorted(by_price.items())},
+        "by_time_in_window": {name: _agg(by_phase[name]) for _, _, name in PHASES
+                              if by_phase.get(name)},
+        "by_role": {k: _agg(v) for k, v in by_role.items()},
+        "cheap_late_buys (<=15c, 2nd half)": _agg(cheap_late),
+    }
+
+
+def analyze_wallet(address: str, out_csv: str, get: Getter = _http_get,
+                   pause_s: float = 0.15, progress: Callable[[int, int], None] | None = None
                    ) -> dict[str, Any]:
     trades = fetch_wallet_trades(address, get)
-    slugs = sorted({t["slug"] for t in trades if t.get("slug")})
-    rows, summary = summarize_wallet(trades, fetch_resolutions(slugs, get))
+    markets: dict[str, str | None] = {}
+    for t in trades:
+        if t.get("slug"):
+            markets.setdefault(t["slug"], t.get("conditionId"))
+    winners, diag = fetch_resolutions(dict(sorted(markets.items())), get, pause_s, progress)
+    rows, summary = summarize_wallet(trades, winners)
+    both = [r for r in rows if r["pnl"] is not None and r["bought_both_sides"]]
+    one = [r for r in rows if r["pnl"] is not None and not r["bought_both_sides"]]
+    summary["pnl_both_sides_markets"] = round(sum(r["pnl"] for r in both), 2) if both else None
+    summary["pnl_one_side_markets"] = round(sum(r["pnl"] for r in one), 2) if one else None
+    summary["resolution_lookup"] = diag
+    summary["fills_held_to_resolution"] = fill_breakdown(trades, winners)
     write_csv(Path(out_csv), rows)
     return summary
 
