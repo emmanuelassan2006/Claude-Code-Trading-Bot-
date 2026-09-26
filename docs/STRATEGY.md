@@ -77,6 +77,24 @@ each time. The price feed was fine: basis versus BRTI had a median of −$1.88 a
   If the market is the better predictor, the model should follow the market (quote around the
   mid and use the model only to detect short-lived lags), not fight it.
 
+## Calibration result (owner's data, 2026-09-26: 53 windows, 5,700 samples)
+
+| | Brier model | Brier market | coin flip |
+|---|---|---|---|
+| all | 0.1614 | **0.1542** | 0.2500 |
+| 15m | 0.1837 | **0.1732** | |
+| 1h | 0.1411 | **0.1367** | |
+
+When model and market disagreed, the model was closer to the outcome only 28% of the time (gap
+5–10¢), 15% (10–20¢) and 9% (>20¢). Trading at the mid toward the model lost 1–7¢/share (up to
+24¢ on the 1h). Backtest with the guards: −$1.77 over 54 windows, maker markouts vs the market
+mid ≈ 0.
+
+**Conclusion: the market is a better predictor than this model at every horizon, so trading the
+model's opinion has no edge.** Any remaining edge would have to come from (a) the book lagging
+fast BTC moves by more than the fee plus spread (lead-lag), or (b) market making around the mid for
+the 1¢ spread plus rebates. Neither is demonstrated yet. Do not build live execution on this strategy.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every
