@@ -88,7 +88,19 @@ def _parse_since(s: str | None) -> float | None:
     return datetime.fromisoformat(s).replace(tzinfo=timezone.utc).timestamp()
 
 
+def _use_certifi_bundle() -> None:
+    """python.org macOS builds ship without a CA bundle; point OpenSSL at certifi's."""
+    import os
+
+    try:
+        import certifi
+    except ImportError:
+        return
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+
+
 def main(argv: list[str] | None = None) -> int:
+    _use_certifi_bundle()
     p = argparse.ArgumentParser(prog="pmbot", description=__doc__)
     p.add_argument("--config", default="config.toml")
     sub = p.add_subparsers(dest="cmd", required=True)
