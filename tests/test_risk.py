@@ -31,7 +31,7 @@ def test_check_cuts_quantity_to_window_budget():
 
 
 def test_total_exposure_cap_across_windows():
-    r = engine(max_total_exposure=D("25"))
+    r = engine(max_total_exposure=D("25"), daily_loss_hard_cap=False)
     r.register_window("w2", T0 + 900)
     r.on_fill("w", None, "buy", D("0.5"), 40, D("0"))     # $20 at risk
     q, _ = r.check("w2", "buy", D("0.5"), 40, T0)
@@ -94,3 +94,17 @@ def test_fills_update_resting_and_exposure():
     assert w.pos == 4 and w.resting["o1"][2] == 6 and w.cash == D("-2.02")
     r.on_order_done("w", "o1")
     assert w.exposure() == D("2.02")
+
+
+def test_daily_loss_hard_cap_limits_open_risk_to_remaining_budget():
+    r = engine()                                   # limit $20, hard cap on
+    r.register_window("w2", T0 + 900)
+    r.on_fill("w", None, "buy", D("0.5"), 30, D("0"))     # $15 at risk
+    assert r.check("w2", "buy", D("0.5"), 40, T0)[0] == 10  # only $5 of the $20 left
+    r.realized_today = D("-12")                    # after a $12 realized loss
+    assert r.total_cap() == D("8")
+
+
+def test_hard_cap_off_restores_total_exposure_limit():
+    r = engine(daily_loss_hard_cap=False)
+    assert r.total_cap() == D("60")

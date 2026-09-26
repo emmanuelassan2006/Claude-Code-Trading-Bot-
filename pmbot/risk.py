@@ -227,10 +227,22 @@ class RiskEngine:
         if rate:
             return 0, rate
         others = sum((x.exposure() for k, x in self.windows.items() if k != key), ZERO)
+        total_cap = self.total_cap()
         q = qty
         while q > 0:
             wexp = w.exposure((side, price, q), exclude=replacing)
-            if wexp <= self.window_budget and others + wexp <= self.cfg.max_total_exposure:
+            if wexp <= self.window_budget and others + wexp <= total_cap:
                 return q, "" if q == qty else f"cut {qty}->{q} by exposure caps"
             q -= 1
         return 0, "exposure caps"
+
+    def total_cap(self) -> Decimal:
+        """Total worst-case exposure allowed now.
+
+        With daily_loss_hard_cap, open risk can never exceed what is left of the
+        daily loss limit, so settlement cannot push the day past the limit.
+        """
+        cap = self.cfg.max_total_exposure
+        if self.cfg.daily_loss_hard_cap:
+            cap = min(cap, max(ZERO, self.cfg.daily_loss_limit + self.realized_today))
+        return cap

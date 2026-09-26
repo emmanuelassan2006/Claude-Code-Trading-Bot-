@@ -51,6 +51,7 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 | `pmbot run` | **Paper-trade** the strategy on live data (monitor + strategy + risk engine + simulated exchange). Logs a `SIZING` line before every simulated order. |
 | `pmbot run --live` | Refused: it requires `dry_run = false` in config **and** this flag, and live submission isn't built yet. |
 | `pmbot backtest [--since 24h] [--out file.db]` | Replay recorded monitor data through the exact same strategy and risk engine. |
+| `pmbot calibrate [--since 24h]` | Is the model a better predictor than the market? Brier score, log loss, and who was right when they disagreed. **Check this before trusting any edge.** |
 | `pmbot report --strategy [--since 24h]` | Paper-trading P&L by component, market and day; fees, rebates, markouts (adverse selection), carried inventory, drawdown. |
 | `pmbot report [--since 24h] [--min-edge 0.02] [--horizon 60] [--csv DIR] [--json]` | Gap/spread/fill-proxy/tape stats per asset and duration, plus price-to-beat rule accuracy. |
 | `pmbot analyze-tape [--out reports/tape.csv]` | Summarize the anonymous US trade tape. |

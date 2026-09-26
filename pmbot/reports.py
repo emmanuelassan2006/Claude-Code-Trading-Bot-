@@ -278,6 +278,9 @@ def build_strategy_report(store: Store, mode: str = "dry_run", since: float | No
             if f[f"markout_{i}"] is not None:
                 k[f"mo{i}_sum"] += f[f"markout_{i}"] * f["qty"]
                 k[f"mo{i}_n"] += f["qty"]
+            if f.get(f"mkt_markout_{i}") is not None:
+                k[f"mm{i}_sum"] += f[f"mkt_markout_{i}"] * f["qty"]
+                k[f"mm{i}_n"] += f["qty"]
 
     kinds = {}
     for name, k in by_kind.items():
@@ -287,6 +290,8 @@ def build_strategy_report(store: Store, mode: str = "dry_run", since: float | No
             "avg_edge_at_fill": k["edge_sum"] / k["shares"] if k["shares"] else None,
             "markout_1_avg": k["mo1_sum"] / k["mo1_n"] if k["mo1_n"] else None,
             "markout_2_avg": k["mo2_sum"] / k["mo2_n"] if k["mo2_n"] else None,
+            "mkt_markout_1_avg": k["mm1_sum"] / k["mm1_n"] if k["mm1_n"] else None,
+            "mkt_markout_2_avg": k["mm2_sum"] / k["mm2_n"] if k["mm2_n"] else None,
         }
 
     traded = [w for w in wins if w["maker_fills"] or w["taker_fills"]]
@@ -336,8 +341,11 @@ def render_strategy_text(r: dict[str, Any]) -> str:
         L.append(
             f"  {k:6s} fills={v['fills']} shares={v['shares']} P&L=${v['pnl']:.2f} "
             f"fees=${v['fees']:.2f} rebates=${v['rebates']:.2f} "
-            f"edge@fill={_fmt(v['avg_edge_at_fill'])} "
-            f"markout(adverse<0) 1={_fmt(v['markout_1_avg'])} 2={_fmt(v['markout_2_avg'])}")
+            f"edge@fill(model)={_fmt(v['avg_edge_at_fill'])}")
+        L.append(
+            f"         markouts, >0 = price moved our way:  vs MARKET mid "
+            f"{_fmt(v['mkt_markout_1_avg'])} / {_fmt(v['mkt_markout_2_avg'])}   "
+            f"vs own model {_fmt(v['markout_1_avg'])} / {_fmt(v['markout_2_avg'])}")
     L += ["", "by market:"] + [f"  {k}: ${v:.2f}" for k, v in r["by_market"].items()]
     L += ["", "by day (UTC):"] + [f"  {k}: ${v:.2f}" for k, v in sorted(r["by_day"].items())]
     return "\n".join(L)

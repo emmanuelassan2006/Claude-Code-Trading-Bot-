@@ -125,6 +125,7 @@ class StrategyConfig:
     vol_lookback_s: float = 1800.0
     vol_sample_s: float = 5.0
     vol_min_returns: int = 30
+    vol_refresh_s: float = 10.0          # recompute realized vol at most this often
     vol_floor_annual: float = 0.20
     vol_cap_annual: float = 2.50
     vol_uncertainty: float = 0.25        # fair-value band uses sigma * (1 +/- this)
@@ -157,6 +158,12 @@ class StrategyConfig:
     taker_price_min: Decimal = Decimal("0.02")
     taker_price_max: Decimal = Decimal("0.98")
     taker_cooldown_s: float = 2.0
+    # Only take against a book updated within this many seconds.
+    taker_book_max_age_s: float = 1.0
+    # If our fair value differs from the market mid by more than this, assume the
+    # model is wrong (not the market): pull quotes and do not take. The first paper
+    # run lost on every trade where the gap was 15-27c.
+    max_market_gap: Decimal = Decimal("0.10")
 
 
 @dataclass
@@ -167,6 +174,10 @@ class RiskConfig:
     max_total_exposure: Decimal = Decimal("60")
     daily_loss_limit: Decimal = Decimal("20")       # halts until next UTC day
     daily_take_profit: Decimal = Decimal("0")       # 0 = off
+    # True cap: worst-case loss of all open positions + resting orders may not
+    # exceed what is left of the daily loss limit (otherwise positions opened
+    # before the halt can push the day past the limit at settlement).
+    daily_loss_hard_cap: bool = True
     window_take_profit: Decimal = Decimal("5")      # lock window (stop trading it)
     window_stop_loss: Decimal = Decimal("10")       # lock window
     entry_cutoff_s: float = 30.0                    # no orders in final N s; cancel all

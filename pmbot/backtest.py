@@ -60,6 +60,8 @@ def run_backtest(cfg: Config, src: Store, out: Store, since: float | None = None
         engine.add_window(Window(key, r["asset"], r["duration"], r["start_ts"], r["end_ts"],
                                  "single", r["up_slug"], None, bool(r["long_is_up"]),
                                  r["title"] or ""))
+        if r.get("ptb_api") is not None:
+            engine.set_strike(key, r["ptb_api"])  # the exchange's published price to beat
         added.add(key)
 
     def settle_due(now: float) -> None:

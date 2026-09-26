@@ -60,6 +60,23 @@ the edge holds, max 20 shares per signal, 2 s cooldown. This catches books that
 lag BTC moves. Fees are smallest near 0 and 1, so late-window mispricings are
 cheapest to take.
 
+## Guards added after the first paper run (2026-09-26)
+
+The first 10-hour paper run lost $23.61 on 4 windows. Every losing trade was a
+taker trade where our fair value differed from the market by 15–27¢, and the market was right
+each time. The price feed was fine: basis versus BRTI had a median of −$1.88 and |p90| of $5.81. So:
+- **Market-disagreement guard:** if |fair − market mid| > `max_market_gap` (10¢), the bot
+  assumes the model is wrong, pulls its quotes and doesn't take.
+- **Fresh-book rule for takers:** no taking against a book older than 1 s.
+- **Hard daily cap:** open worst-case risk may not exceed what is left of the daily loss
+  limit, so settlements can't push the day past the limit.
+- **Honest adverse selection:** fills now record markouts against the *market mid*, as well as against our own model.
+  Model-relative markouts look good whenever the model is biased.
+- **`pmbot calibrate`** measures whether the model predicts outcomes better than the market
+  (Brier / log loss), and what trading toward the model at each disagreement size would have earned.
+  If the market is the better predictor, the model should follow the market (quote around the
+  mid and use the model only to detect short-lived lags), not fight it.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every

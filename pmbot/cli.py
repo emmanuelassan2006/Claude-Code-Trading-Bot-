@@ -151,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
     b.add_argument("--out", default=":memory:", help="SQLite file for results (default: memory)")
 
+    cal = sub.add_parser("calibrate", help="is the model a better predictor than the market?")
+    cal.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
+    cal.add_argument("--every", type=float, default=10.0, help="seconds between samples")
+
     sub.add_parser("kill", help="create the kill file (running processes stop)")
 
     args = p.parse_args(argv)
@@ -193,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
 
     store = Store(cfg.paths.db_path, mode="monitor")
     try:
+        if args.cmd == "calibrate":
+            from pmbot.calibrate import collect, render, summarize
+
+            print(render(summarize(collect(cfg, store, _parse_since(args.since), args.every))))
+            return 0
         if args.cmd == "report":
             from pmbot.reports import build_report, export_csv, render_text
 

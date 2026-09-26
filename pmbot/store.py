@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS fills (
     id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT, ts REAL, order_id TEXT,
     window_key TEXT, strategy TEXT, kind TEXT, side TEXT, price REAL, qty INTEGER,
     fee REAL,               -- net: positive = fee paid, negative = rebate
-    fair_at_fill REAL, markout_1 REAL, markout_2 REAL
+    fair_at_fill REAL, markout_1 REAL, markout_2 REAL,
+    mid_at_fill REAL, mkt_markout_1 REAL, mkt_markout_2 REAL
 );
 CREATE INDEX IF NOT EXISTS ix_fills_window ON fills(window_key);
 CREATE TABLE IF NOT EXISTS window_results (
@@ -99,6 +100,7 @@ class Store:
         "windows": {"ptb_api": "REAL", "settle_api": "REAL", "index_symbol": "TEXT",
                     "fee_coefficient": "REAL", "tick": "REAL"},
         "book_samples": {"ref_price": "REAL"},
+        "fills": {"mid_at_fill": "REAL", "mkt_markout_1": "REAL", "mkt_markout_2": "REAL"},
     }
 
     def _migrate(self) -> None:

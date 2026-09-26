@@ -42,6 +42,8 @@ class EngineWindow:
     closed: bool = False
     cutoff_done: bool = False
     strike_fixed: bool = False        # True once the API's priceToBeat is known
+    book_ts: float = 0.0              # when the book was last updated
+    disagree: bool = False            # model vs market gap currently too large
     stats: dict[str, Any] = field(default_factory=lambda: defaultdict(lambda: ZERO))
     note: str = ""
 
@@ -93,6 +95,7 @@ class TradingEngine:
         if ew is None:
             return
         ew.bids, ew.asks = bids, asks
+        ew.book_ts = now
         self._now = now
         self.exec.on_book(key, bids, asks, now)
         self.evaluate(key, now)
@@ -122,8 +125,10 @@ class TradingEngine:
             self.store.log_event("warning", "window_lock", f"{key} {reason}")
             self.pull_all(now, key=key, why="window lock")
         if halted:
-            log.error("TRADING HALTED: %s (until %s)", self.risk.halt_reason,
-                      self.risk.halted_until)
+            from datetime import datetime
+
+            log.error("TRADING HALTED: %s (until %s local time)", self.risk.halt_reason,
+                      datetime.fromtimestamp(self.risk.halted_until).strftime("%Y-%m-%d %H:%M"))
             self.store.log_event("error", "halt", self.risk.halt_reason)
             self.pull_all(now, why="halt")
 
@@ -197,7 +202,7 @@ class TradingEngine:
 
     def _sigma(self, asset: str, now: float) -> float | None:
         cached = self._vol_cache.get(asset)
-        if cached and now - cached[0] < 1.0:
+        if cached and 0 <= now - cached[0] < self.cfg.strategy.vol_refresh_s:
             return cached[1]
         c = self.cfg.strategy
         h = self.histories.get(asset)
@@ -274,10 +279,24 @@ class TradingEngine:
                 self.pull_all(now, key=key, why=ew.note)
             return
         self.risk.update_mark(key, fv.p)
+        mid = self.market_mid(ew)
+        gap = abs(Decimal(str(fv.p)) - mid) if mid is not None else None
+        if gap is not None and gap > self.cfg.strategy.max_market_gap:
+            if not ew.disagree:
+                log.info("DISAGREE %s fair=%.3f market_mid=%s gap=%.3f: not trading until it "
+                         "narrows", key, fv.p, mid, gap)
+                ew.disagree = True
+            if ew.resting:
+                self.pull_all(now, key=key, why="model/market disagree")
+            return
+        ew.disagree = False
         scale = self.cfg.sizing.trade_scale
         d = self.strategy.decide(fv, ew.bids, ew.asks, wr.pos, ew.window.end_ts - now,
                                  now - ew.window.start_ts, ew.window.duration, scale)
+        book_fresh = now - ew.book_ts <= self.cfg.strategy.taker_book_max_age_s
         for t in d.takes:
+            if not book_fresh:
+                continue
             if now - ew.last_take.get(t.side, -1e18) < self.cfg.strategy.taker_cooldown_s:
                 continue
             q, why = self.risk.check(key, t.side, t.limit_price, t.qty, now)
@@ -322,6 +341,12 @@ class TradingEngine:
                 ew.last_requote = now
             new = self._send(ew, "maker", side, want.price, q, want.exp_edge_ps, fv, now, why)
             ew.resting[side] = new.id
+
+    @staticmethod
+    def market_mid(ew: EngineWindow) -> Decimal | None:
+        if ew.bids and ew.asks:
+            return (ew.bids[0].price + ew.asks[0].price) / 2
+        return None
 
     # ---- order plumbing ------------------------------------------------------
     def _send(self, ew: EngineWindow, kind: str, side: str, price: Decimal, qty: int,
@@ -371,6 +396,7 @@ class TradingEngine:
             "ts": ts, "order_id": o.id, "window_key": o.window_key,
             "strategy": self.strategy.name, "kind": o.kind, "side": o.side,
             "price": float(price), "qty": qty, "fee": float(fee), "fair_at_fill": fair,
+            "mid_at_fill": float(m) if ew and (m := self.market_mid(ew)) is not None else None,
         })
         self.store.update("orders", "id=?", [o.id], filled=o.filled)
         if ew:
@@ -401,25 +427,38 @@ class TradingEngine:
         keep = []
         for fid, key, ts, side, price, i in self._markouts:
             ew = self.windows.get(key)
-            if now < ts + self.cfg.sim.markout_s[i] or ew is None or ew.fv is None:
+            if now < ts + self.cfg.sim.markout_s[i] or ew is None:
                 keep.append((fid, key, ts, side, price, i))
                 continue
-            self._write_markout(fid, side, price, i, ew.fv.p)
+            self._write_markout(fid, side, price, i, ew)
         self._markouts = keep
 
-    def _write_markout(self, fid: int, side: str, price: Decimal, i: int, fair: float) -> None:
-        m = fair - float(price) if side == "buy" else float(price) - fair
-        self.store.update("fills", "id=?", [fid], **{f"markout_{i + 1}": m})
+    def _write_markout(self, fid: int, side: str, price: Decimal, i: int,
+                       ew: EngineWindow) -> None:
+        """Markouts > 0 mean the price moved our way after the fill.
+
+        markout_N compares with our own fair value (only meaningful if the model is
+        right); mkt_markout_N compares with the market mid (independent of the model:
+        the honest adverse-selection measure).
+        """
+        sign = 1.0 if side == "buy" else -1.0
+        fields = {}
+        if ew.fv is not None:
+            fields[f"markout_{i + 1}"] = sign * (ew.fv.p - float(price))
+        mid = self.market_mid(ew)
+        if mid is not None:
+            fields[f"mkt_markout_{i + 1}"] = sign * (float(mid) - float(price))
+        if fields:
+            self.store.update("fills", "id=?", [fid], **fields)
 
     def _finalize_markouts(self, key: str) -> None:
         ew = self.windows.get(key)
-        fair = ew.fv.p if ew and ew.fv else None
         keep = []
         for fid, k, ts, side, price, i in self._markouts:
             if k != key:
                 keep.append((fid, k, ts, side, price, i))
-            elif fair is not None:
-                self._write_markout(fid, side, price, i, fair)
+            elif ew is not None:
+                self._write_markout(fid, side, price, i, ew)
         self._markouts = keep
 
     def shutdown(self, now: float) -> None:

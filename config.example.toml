@@ -95,6 +95,9 @@ taker_max_shares = 20
 taker_price_min = 0.02
 taker_price_max = 0.98
 taker_cooldown_s = 2.0
+taker_book_max_age_s = 1.0   # only take against a book updated within 1 s
+max_market_gap = 0.10        # |fair - market mid| above this => assume model is wrong; don't trade
+vol_refresh_s = 10.0
 
 [strategy.settle_twap_s]     # verified: 60 BRTI prices in the final minute
 15m = 60
@@ -109,6 +112,7 @@ max_window_exposure = 20     # worst-case loss $ per window (incl. resting order
 max_total_exposure = 60
 daily_loss_limit = 20        # halts until next UTC day
 daily_take_profit = 0        # 0 = off
+daily_loss_hard_cap = true   # open worst-case risk <= what's left of daily_loss_limit
 window_take_profit = 5       # lock the window (stop trading it)
 window_stop_loss = 10
 entry_cutoff_s = 30          # no orders in the final 30 s; cancel all

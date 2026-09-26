@@ -34,6 +34,7 @@ def setup(price=100_000.0, **cfg_overrides):
     eng = TradingEngine(cfg, store, {"BTC": h}, mode="dry_run")
     w = Window("btc-w", "BTC", "15m", START, END, "single", "cpc-btc", None, True)
     eng.add_window(w)
+    eng.set_strike("btc-w", price)  # production reads priceToBeat from the API
     return eng, store, h
 
 
@@ -97,7 +98,8 @@ def test_entry_cutoff_cancels_and_blocks():
 
 
 def test_taker_fires_when_book_is_far_from_fair():
-    eng, store, h = setup(maker_enabled=False)
+    from decimal import Decimal
+    eng, store, h = setup(maker_enabled=False, max_market_gap=Decimal("1"))
     now = START + 300
     h.add(Tick(now, 100_600.0))     # well above the strike -> Up very likely
     eng.on_book("btc-w", L((0.30, 50)), L((0.35, 50)), now)
@@ -201,3 +203,50 @@ def test_quote_kept_on_small_moves_and_pulled_when_edge_gone():
     assert ev and ev[0]["detail"] == "requote"
     new_bid = [o for o in eng.exec.open_orders("btc-w") if o.side == "buy" and o.id != bid.id]
     assert new_bid and new_bid[0].price < bid.price
+
+
+def test_no_trading_when_model_and_market_disagree(caplog):
+    eng, store, h = setup()               # default max_market_gap = 0.10
+    now = START + 300
+    h.add(Tick(now, 100_600.0))           # model: Up ~very likely
+    with caplog.at_level(logging.INFO):
+        eng.on_book("btc-w", L((0.30, 50)), L((0.35, 50)), now)   # market says ~0.33
+    assert store.query("SELECT COUNT(*) c FROM orders")[0]["c"] == 0
+    assert eng.windows["btc-w"].disagree
+    assert any("DISAGREE" in r.getMessage() for r in caplog.records)
+
+
+def test_disagreement_pulls_resting_quotes():
+    eng, store, h = setup()
+    now = START + 60
+    h.add(Tick(now, 100_000.0))
+    eng.on_book("btc-w", L((0.40, 100)), L((0.60, 100)), now)
+    assert len(eng.exec.open_orders("btc-w")) == 2
+    eng.on_book("btc-w", L((0.10, 100)), L((0.12, 100)), now + 1)  # market jumps away
+    eng.exec.process(now + 2)
+    assert eng.exec.open_orders("btc-w") == []
+
+
+def test_taker_skips_stale_book():
+    from decimal import Decimal
+    eng, store, h = setup(maker_enabled=False, max_market_gap=Decimal("1"))
+    now = START + 300
+    eng.on_book("btc-w", L((0.30, 50)), L((0.35, 50)), now)      # book arrives...
+    h.add(Tick(now + 5, 100_600.0))
+    eng.on_price("BTC", now + 5)                                   # ...5 s later price moves
+    assert store.query("SELECT COUNT(*) c FROM orders WHERE kind='taker'")[0]["c"] == 0
+
+
+def test_fills_record_market_markouts():
+    eng, store, h = setup()
+    now = START + 60
+    h.add(Tick(now, 100_000.0))
+    eng.on_book("btc-w", L((0.40, 100)), L((0.60, 100)), now)
+    bid = [o for o in eng.exec.open_orders("btc-w") if o.side == "buy"][0]
+    eng.exec.process(now + 1)
+    eng.on_trade("btc-w", bid.price - D("0.01"), 4, now + 1)
+    eng.on_book("btc-w", L((0.30, 100)), L((0.40, 100)), now + 2)   # mid falls to 0.35
+    eng.tick(now + 12)
+    f = store.query("SELECT * FROM fills")[0]
+    assert f["mid_at_fill"] == 0.5
+    assert abs(f["mkt_markout_1"] - (0.35 - float(bid.price))) < 1e-9   # adverse (<0)

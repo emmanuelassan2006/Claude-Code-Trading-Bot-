@@ -54,19 +54,20 @@ class PaperExchange:
         self.latency_s = latency_s
         self.on_fill = on_fill
         self.on_done = on_done or (lambda o, why: None)
-        self.sim_orders: dict[str, SimOrder] = {}
+        self.sim_orders: dict[str, SimOrder] = {}   # every order (for lookup)
+        self._open: dict[str, SimOrder] = {}        # pending/live only (hot path)
         self._ids = itertools.count(1)
         self.books: dict[str, tuple[list[Level], list[Level]]] = {}
 
     def open_orders(self, window_key: str) -> list[SimOrder]:
-        return [o for o in self.sim_orders.values()
-                if o.window_key == window_key and o.status in ("pending", "live")]
+        return [o for o in self._open.values() if o.window_key == window_key]
 
     def place(self, window_key: str, side: str, price: Decimal, qty: int, kind: str,
               now: float) -> SimOrder:
         o = SimOrder(f"sim-{next(self._ids)}", window_key, side, price, qty, kind, now,
                      now + self.latency_s)
         self.sim_orders[o.id] = o
+        self._open[o.id] = o
         return o
 
     def cancel(self, order_id: str, now: float) -> None:
@@ -76,10 +77,11 @@ class PaperExchange:
 
     def _finish(self, o: SimOrder, status: str, why: str) -> None:
         o.status = status
+        self._open.pop(o.id, None)
         self.on_done(o, why)
 
     def _activate(self, now: float) -> None:
-        for o in list(self.sim_orders.values()):
+        for o in list(self._open.values()):
             if o.status == "pending" and o.cancel_at is not None and o.cancel_at <= o.live_ts \
                     and now >= o.cancel_at:
                 self._finish(o, "canceled", "canceled before live")
@@ -100,7 +102,7 @@ class PaperExchange:
 
     def process(self, now: float) -> None:
         self._activate(now)
-        for o in list(self.sim_orders.values()):
+        for o in list(self._open.values()):
             if o.kind != "taker" or o.status != "pending" or now < o.live_ts:
                 continue
             bids, asks = self.books.get(o.window_key, ([], []))
@@ -125,7 +127,7 @@ class PaperExchange:
     def on_trade(self, window_key: str, price: Decimal, qty: int, ts: float) -> None:
         self._activate(ts)
         left = qty
-        live = sorted((o for o in self.sim_orders.values()
+        live = sorted((o for o in self._open.values()
                        if o.window_key == window_key and o.kind == "maker"
                        and o.status == "live" and ts >= o.live_ts
                        and (o.cancel_at is None or ts < o.cancel_at)),
