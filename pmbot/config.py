@@ -103,6 +103,82 @@ class ApiConfig:
 
 
 @dataclass
+class StrategyConfig:
+    """Fair-value market making + opportunistic taking (see docs/STRATEGY.md)."""
+
+    maker_enabled: bool = True
+    taker_enabled: bool = True
+    # --- fair value model ---
+    # Settlement average window (s) per duration; 0 = settle on the last price.
+    # UNVERIFIED for Polymarket US (polymarket.com uses 60 s TWAP for 15m).
+    settle_twap_s: dict[str, float] = field(default_factory=lambda: {"15m": 60, "1h": 60})
+    vol_lookback_s: float = 1800.0
+    vol_sample_s: float = 5.0
+    vol_min_returns: int = 30
+    vol_floor_annual: float = 0.20
+    vol_cap_annual: float = 2.50
+    vol_uncertainty: float = 0.25        # fair-value band uses sigma * (1 +/- this)
+    price_uncertainty_bps: float = 3.0   # feed lag / basis vs settlement source
+    use_all_ptb_candidates: bool = True  # widen band across price-to-beat rules
+    max_feed_age_s: float = 5.0          # no trading on a stale price feed
+    # --- maker quoting ---
+    quote_size: int = 10                 # shares per side (x trade_scale)
+    min_half_spread: Decimal = Decimal("0.01")
+    model_margin: Decimal = Decimal("0.01")
+    inventory_skew_per_share: Decimal = Decimal("0.001")
+    quote_price_min: Decimal = Decimal("0.05")
+    quote_price_max: Decimal = Decimal("0.95")
+    quote_stop_before_close_s: dict[str, float] = field(
+        default_factory=lambda: {"15m": 60, "1h": 90})
+    quote_start_after_open_s: float = 5.0
+    # Half-spread also scales with how fast fair value moves: at least
+    # spread_vol_mult x the 1-sd change in P(Up) over quote_horizon_s.
+    quote_horizon_s: float = 5.0
+    spread_vol_mult: float = 1.0
+    requote_min_interval_s: float = 0.5
+    # Hysteresis: a resting quote is kept while its edge vs the fair band is
+    # >= keep_min_edge; below that it is repriced (or pulled) immediately. A
+    # quote is only moved closer when that improves it by >= requote_improve_ticks.
+    keep_min_edge: Decimal = Decimal("0.005")
+    requote_improve_ticks: int = 2
+    # --- taker ---
+    taker_min_edge: Decimal = Decimal("0.02")   # per share, after taker fee
+    taker_max_shares: int = 20                  # per signal (x trade_scale)
+    taker_price_min: Decimal = Decimal("0.02")
+    taker_price_max: Decimal = Decimal("0.98")
+    taker_cooldown_s: float = 2.0
+
+
+@dataclass
+class RiskConfig:
+    """Hard limits enforced outside the strategy. Worst-case loss in dollars."""
+
+    max_window_exposure: Decimal = Decimal("20")
+    max_total_exposure: Decimal = Decimal("60")
+    daily_loss_limit: Decimal = Decimal("20")       # halts until next UTC day
+    daily_take_profit: Decimal = Decimal("0")       # 0 = off
+    window_take_profit: Decimal = Decimal("5")      # lock window (stop trading it)
+    window_stop_loss: Decimal = Decimal("10")       # lock window
+    entry_cutoff_s: float = 30.0                    # no orders in final N s; cancel all
+    max_orders_per_min: int = 60
+    max_cancels_per_min: int = 60
+    max_actions_per_s: float = 4.0
+
+
+@dataclass
+class SizingConfig:
+    base_window_budget: Decimal = Decimal("20")
+    trade_scale: Decimal = Decimal("1.0")
+    paper_balance: Decimal = Decimal("100")
+
+
+@dataclass
+class SimConfig:
+    latency_ms: float = 150.0        # order/cancel takes effect after this
+    markout_s: list[float] = field(default_factory=lambda: [10.0, 60.0])
+
+
+@dataclass
 class PathsConfig:
     db_path: str = "data/pmbot.db"
     log_dir: str = "logs"
@@ -113,7 +189,7 @@ class PathsConfig:
 
 @dataclass
 class Config:
-    # Phase 1 never trades; this flag is carried for Phase 2/3.
+    # Live trading requires BOTH dry_run = false AND the --live CLI flag.
     dry_run: bool = True
     fees: FeeConfig = field(default_factory=FeeConfig)
     markets: MarketsConfig = field(default_factory=MarketsConfig)
@@ -121,6 +197,10 @@ class Config:
     chainlink: ChainlinkConfig = field(default_factory=ChainlinkConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
+    sizing: SizingConfig = field(default_factory=SizingConfig)
+    sim: SimConfig = field(default_factory=SimConfig)
 
 
 def _coerce(value: Any, default: Any, name: str) -> Any:

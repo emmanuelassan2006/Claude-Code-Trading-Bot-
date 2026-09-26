@@ -92,6 +92,28 @@ class PriceHistory:
             i += 1
         return total / (end - start)
 
+    def average(self, start: float, end: float) -> float | None:
+        """Like twap() but carries the last known price forward past the last tick.
+
+        Used for the already-realized part of a settlement average.
+        """
+        ts, vals = list(self._ts), list(self._vals)
+        if end <= start or not ts:
+            return None
+        i = bisect.bisect_right(ts, start) - 1
+        if i < 0:
+            return None
+        total, t = 0.0, start
+        while t < end:
+            seg_end = min(ts[i + 1], end) if i + 1 < len(ts) else end
+            total += vals[i] * (seg_end - t)
+            t = seg_end
+            i += 1
+        return total / (end - start)
+
+    def series(self) -> tuple[list[float], list[float]]:
+        return list(self._ts), list(self._vals)
+
     def candidates(self, boundary: float, twap_s: float) -> dict[str, float | None]:
         """Candidate reference prices at a window boundary (open or close)."""
         first = self.at_or_after(boundary)

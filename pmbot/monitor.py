@@ -90,6 +90,7 @@ class Monitor:
         self.stream = stream
         self.feed = feed
         self.discoverer = Discoverer(cfg.markets, public.get)
+        self.engine: Any = None  # optional TradingEngine (paper trading)
         self.windows: dict[str, WindowState] = {}
         self.by_slug: dict[str, tuple[WindowState, OrderBook]] = {}
 
@@ -112,6 +113,8 @@ class Monitor:
                  w.structure, w.up_slug, w.down_slug)
         if self.stream is not None:
             self.stream.watch(w.slugs)
+        if self.engine is not None:
+            self.engine.add_window(w)
         return st
 
     async def fetch_description(self, st: WindowState) -> None:
@@ -157,6 +160,8 @@ class Monitor:
                     self._forget(st, now)
 
     def _forget(self, st: WindowState, now: float) -> None:
+        if self.engine is not None and st.window.key in self.engine.windows:
+            self.engine.on_settled(st.window.key, None, now)  # settlement never arrived
         self.store.update_window(st.window.key, finalized_at=now)
         self.windows.pop(st.window.key, None)
         for s in st.window.slugs:
@@ -180,6 +185,8 @@ class Monitor:
             self.store.update_window(st.window.key, settlement=float(value), outcome=outcome,
                                      settled_at=now)
             log.info("settled %s value=%s outcome=%s", st.window.key, value, outcome)
+            if self.engine is not None:
+                self.engine.on_settled(st.window.key, outcome, now)
 
     # ---- market data -----------------------------------------------------
     def on_book(self, slug: str, md: dict[str, Any], recv_ts: float, source: str) -> None:
@@ -189,6 +196,8 @@ class Monitor:
         st, book = entry
         book.apply_snapshot(md, recv_ts)
         self.evaluate(st, recv_ts)
+        if self.engine is not None and st.books.ready():
+            self.engine.on_book(st.window.key, st.books.up_bids(), st.books.up_asks(), recv_ts)
 
     def on_trade(self, slug: str, tr: dict[str, Any], recv_ts: float) -> None:
         entry = self.by_slug.get(slug)
@@ -211,6 +220,13 @@ class Monitor:
             "taker_side": taker.get("side"), "taker_intent": taker.get("intent"),
             "secs_into_window": ts - st.window.start_ts,
         })
+        price, qty = amt(tr.get("price")), amt(tr.get("quantity"))
+        if self.engine is not None and price is not None and qty:
+            from decimal import Decimal as _D
+
+            up_price = price if (st.window.structure == "pair" or st.window.long_is_up) \
+                else 1 - price
+            self.engine.on_trade(st.window.key, _D(str(round(up_price, 6))), int(qty), ts)
 
     def evaluate(self, st: WindowState, now: float, force_sample: bool = False) -> None:
         """Runs on every book update."""
@@ -299,12 +315,16 @@ class Monitor:
             now = time.time()
             try:
                 self.tick_lifecycle(now)
+                if self.engine is not None:
+                    self.engine.tick(now)
                 await self.check_settlements(now)
             except Exception as e:
                 log.exception("lifecycle error: %s", e)
                 self.store.log_event("error", "lifecycle", str(e))
             if Path(self.cfg.paths.kill_file).exists():
                 log.warning("kill file %s present: stopping", self.cfg.paths.kill_file)
+                if self.engine is not None:
+                    self.engine.pull_all(time.time(), why="kill switch")
                 self.store.log_event("warning", "kill_switch", "kill file present")
                 stop.set()
             try:
@@ -314,5 +334,7 @@ class Monitor:
 
     def shutdown(self) -> None:
         now = time.time()
+        if self.engine is not None:
+            self.engine.shutdown(now)
         for st in self.windows.values():
             self._close_gap(st, now, "shutdown")

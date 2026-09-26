@@ -50,6 +50,30 @@ CREATE TABLE IF NOT EXISTS trades (
     taker_side TEXT, taker_intent TEXT, secs_into_window REAL
 );
 CREATE INDEX IF NOT EXISTS ix_trades_window ON trades(window_key);
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY, mode TEXT, window_key TEXT, strategy TEXT, kind TEXT,
+    side TEXT, price REAL, qty INTEGER, filled INTEGER DEFAULT 0,
+    status TEXT, reason TEXT,
+    fair REAL, exp_edge_ps REAL,
+    signal_ts REAL, sent_ts REAL, ack_ts REAL, done_ts REAL
+);
+CREATE TABLE IF NOT EXISTS order_events (
+    ts REAL, mode TEXT, order_id TEXT, event TEXT, detail TEXT
+);
+CREATE TABLE IF NOT EXISTS fills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT, ts REAL, order_id TEXT,
+    window_key TEXT, strategy TEXT, kind TEXT, side TEXT, price REAL, qty INTEGER,
+    fee REAL,               -- net: positive = fee paid, negative = rebate
+    fair_at_fill REAL, markout_1 REAL, markout_2 REAL
+);
+CREATE INDEX IF NOT EXISTS ix_fills_window ON fills(window_key);
+CREATE TABLE IF NOT EXISTS window_results (
+    window_key TEXT, mode TEXT, asset TEXT, duration TEXT, end_ts REAL,
+    outcome TEXT, outcome_source TEXT, final_pos INTEGER, cash REAL, pnl REAL,
+    maker_fills INTEGER, taker_fills INTEGER, fees REAL, rebates REAL,
+    carried_inventory INTEGER, locked TEXT,
+    PRIMARY KEY (window_key, mode)
+);
 CREATE TABLE IF NOT EXISTS event_log (
     ts REAL, mode TEXT, level TEXT, kind TEXT, detail TEXT
 );
@@ -105,6 +129,14 @@ class Store:
 
     def add_trade(self, row: dict[str, Any]) -> None:
         self._insert("trades", row)
+
+    def insert(self, table: str, row: dict[str, Any]) -> int:
+        return self._insert(table, row)
+
+    def update(self, table: str, where: str, params: list[Any], **fields: Any) -> None:
+        sets = ",".join(f"{k}=?" for k in fields)
+        self.conn.execute(f"UPDATE {table} SET {sets} WHERE {where}", [*fields.values(), *params])
+        self.conn.commit()
 
     def log_event(self, level: str, kind: str, detail: str = "") -> None:
         self._insert("event_log", {"ts": time.time(), "level": level, "kind": kind, "detail": detail})

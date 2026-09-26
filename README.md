@@ -3,10 +3,13 @@
 Personal bot for **Polymarket US** (the CFTC-regulated exchange, `polymarket.us`),
 not polymarket.com. Target: short-duration crypto "Up or Down" windows.
 
-**Current status: Phase 1 (monitor + research). This code cannot place,
-modify or cancel orders. There are no trading endpoints in it at all.**
-Phase 2 (fees → strategies, risk, dry-run, ledger) and Phase 3 (live orders
-behind a double opt-in) come after review.
+**Current status: monitor + strategy with paper trading and backtesting.
+This code cannot place, modify or cancel real orders. There are no trading
+endpoints in it at all.** Live order submission (Phase 3) comes after review.
+
+What Polymarket US actually lists (confirmed 2026-09-26): **BTC Up/Down, 15-minute
+and 60-minute windows only**, each a single market. The strategy is
+fair-value market making plus opportunistic taking; see **`docs/STRATEGY.md`**.
 
 Read `docs/RESEARCH.md` first: it covers the API, fees, and one important
 structural finding. Polymarket US has **one order book per market**. If a
@@ -43,6 +46,10 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 | Command | What it does |
 |---|---|
 | `pmbot monitor [-v]` | Discover windows, subscribe to books + trades, stream Chainlink prices, record everything to SQLite. |
+| `pmbot run` | **Paper-trade** the strategy on live data (monitor + strategy + risk engine + simulated exchange). Logs a `SIZING` line before every simulated order. |
+| `pmbot run --live` | Refused: it requires `dry_run = false` in config **and** this flag, and live submission isn't built yet. |
+| `pmbot backtest [--since 24h] [--out file.db]` | Replay recorded monitor data through the exact same strategy and risk engine. |
+| `pmbot report --strategy [--since 24h]` | Paper-trading P&L by component, market and day; fees, rebates, markouts (adverse selection), carried inventory, drawdown. |
 | `pmbot report [--since 24h] [--min-edge 0.02] [--horizon 60] [--csv DIR] [--json]` | Gap/spread/fill-proxy/tape stats per asset and duration, plus price-to-beat rule accuracy. |
 | `pmbot analyze-tape [--out reports/tape.csv]` | Summarize the anonymous US trade tape. |
 | `pmbot analyze-wallet 0xADDR [--out reports/wallet.csv]` | Read-only analysis of a **public polymarket.com** wallet (US accounts are not public). |
@@ -72,8 +79,8 @@ rejected.
 
 ## Kill switch
 
-`pmbot kill` (or `touch KILL`) stops the process. Delete `KILL` to allow a restart.
-In Phase 2+ the same switch will also cancel all open orders first.
+`pmbot kill` (or `touch KILL`) cancels all (simulated) open orders and stops the
+process within 1 s. Delete `KILL` to allow a restart.
 
 ## Layout
 
@@ -87,7 +94,13 @@ pmbot/marketdata.py  read-only gateway REST + markets WebSocket (reconnect, REST
 pmbot/feeds/chainlink.py  live Chainlink stream, TWAP, price-to-beat candidates
 pmbot/monitor.py     Phase 1 engine (evaluates on every book update)
 pmbot/store.py       SQLite
-pmbot/reports.py     report + CSV export
+pmbot/model.py       fair value P(Up) (digital option, TWAP-aware) + realized vol
+pmbot/strategy.py    fair-value quoting + taking (proposes only)
+pmbot/risk.py        risk engine (worst-case exposure, caps, cutoff, halts, locks, rates)
+pmbot/sim.py         paper exchange (latency, post-only, trade-through fills, IOC)
+pmbot/engine.py      strategy -> risk -> executor -> ledger; shared by paper/backtest/live
+pmbot/backtest.py    replay recorded data through the engine
+pmbot/reports.py     reports + CSV export
 pmbot/wallet.py      tape + public-wallet analysis
 pmbot/cli.py         entry point
 ```

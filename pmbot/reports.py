@@ -6,7 +6,8 @@ from __future__ import annotations
 import csv
 import json
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -225,3 +226,104 @@ def export_csv(store: Store, rep: dict[str, Any], out_dir: str) -> list[Path]:
     write_csv(paths[2], [dict(r) for r in store.query("SELECT * FROM windows")])
     return paths
 
+
+
+# ---- strategy (paper / backtest) report ------------------------------------
+
+def build_strategy_report(store: Store, mode: str = "dry_run", since: float | None = None
+                          ) -> dict[str, Any]:
+    since = since or 0.0
+    wins = [dict(r) for r in store.query(
+        "SELECT * FROM window_results WHERE mode=? AND end_ts >= ? ORDER BY end_ts",
+        [mode, since])]
+    outcome = {w["window_key"]: w["outcome"] for w in wins}
+    fills = [dict(r) for r in store.query(
+        "SELECT * FROM fills WHERE mode=? ORDER BY ts", [mode])]
+    fills = [f for f in fills if f["window_key"] in outcome]
+    orders = [dict(r) for r in store.query("SELECT * FROM orders WHERE mode=?", [mode])]
+    cancels = store.query("SELECT COUNT(*) c FROM order_events WHERE mode=? AND event='cancel'",
+                          [mode])[0]["c"]
+    rejects = store.query("SELECT COUNT(*) c FROM order_events WHERE mode=? AND event='reject'",
+                          [mode])[0]["c"]
+
+    by_kind: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for f in fills:
+        o = outcome.get(f["window_key"])
+        x = 1.0 if o == "up" else 0.0 if o == "down" else 0.5
+        sign = 1 if f["side"] == "buy" else -1
+        pnl = sign * (x - f["price"]) * f["qty"] - f["fee"]
+        k = by_kind[f["kind"]]
+        k["fills"] += 1
+        k["shares"] += f["qty"]
+        k["pnl"] += pnl
+        k["fees"] += max(f["fee"], 0)
+        k["rebates"] += max(-f["fee"], 0)
+        if f["fair_at_fill"] is not None:
+            k["edge_sum"] += sign * (f["fair_at_fill"] - f["price"]) * f["qty"]
+        for i in (1, 2):
+            if f[f"markout_{i}"] is not None:
+                k[f"mo{i}_sum"] += f[f"markout_{i}"] * f["qty"]
+                k[f"mo{i}_n"] += f["qty"]
+
+    kinds = {}
+    for name, k in by_kind.items():
+        kinds[name] = {
+            "fills": int(k["fills"]), "shares": int(k["shares"]), "pnl": k["pnl"],
+            "fees": k["fees"], "rebates": k["rebates"],
+            "avg_edge_at_fill": k["edge_sum"] / k["shares"] if k["shares"] else None,
+            "markout_1_avg": k["mo1_sum"] / k["mo1_n"] if k["mo1_n"] else None,
+            "markout_2_avg": k["mo2_sum"] / k["mo2_n"] if k["mo2_n"] else None,
+        }
+
+    traded = [w for w in wins if w["maker_fills"] or w["taker_fills"]]
+    cum = peak = dd = 0.0
+    for w in wins:
+        cum += w["pnl"]
+        peak = max(peak, cum)
+        dd = max(dd, peak - cum)
+    by_day: dict[str, float] = defaultdict(float)
+    by_dur: dict[str, float] = defaultdict(float)
+    for w in wins:
+        by_day[datetime.fromtimestamp(w["end_ts"], timezone.utc).date().isoformat()] += w["pnl"]
+        by_dur[f"{w['asset']} {w['duration']}"] += w["pnl"]
+    carried = [w for w in wins if w["carried_inventory"]]
+    lat = [o["ack_ts"] - o["sent_ts"] for o in orders if o["ack_ts"] and o["sent_ts"]]
+    return {
+        "mode": mode, "windows": len(wins), "windows_traded": len(traded),
+        "total_pnl": sum(w["pnl"] for w in wins),
+        "win_rate_pct": 100.0 * sum(w["pnl"] > 0 for w in traded) / len(traded) if traded else None,
+        "max_drawdown": dd,
+        "by_kind": kinds, "by_day": dict(by_day), "by_market": dict(by_dur),
+        "carried_windows": len(carried), "carried_pnl": sum(w["pnl"] for w in carried),
+        "locked_windows": sum(1 for w in wins if w["locked"]),
+        "outcome_sources": dict(Counter(w["outcome_source"] for w in wins)),
+        "orders": len(orders), "cancels": cancels, "rejects": rejects,
+        "latency_ms_avg": 1000 * sum(lat) / len(lat) if lat else None,
+    }
+
+
+def render_strategy_text(r: dict[str, Any]) -> str:
+    L = [f"Strategy report ({r['mode']})", "=" * 30]
+    if not r["windows"]:
+        return "\n".join(L + ["No settled windows yet."])
+    L += [
+        f"windows settled={r['windows']} traded={r['windows_traded']} "
+        f"win rate={_fmt(r['win_rate_pct'], 1)}%",
+        f"total P&L=${r['total_pnl']:.2f}  max drawdown=${r['max_drawdown']:.2f}",
+        f"carried inventory to resolution: {r['carried_windows']} windows, "
+        f"P&L ${r['carried_pnl']:.2f};  locked windows: {r['locked_windows']}",
+        f"orders={r['orders']} cancels={r['cancels']} post-only rejects={r['rejects']} "
+        f"sim latency={_fmt(r['latency_ms_avg'], 0)}ms",
+        f"outcome sources: {r['outcome_sources']}",
+        "",
+        "by component (P&L attributed per fill vs final outcome):",
+    ]
+    for k, v in r["by_kind"].items():
+        L.append(
+            f"  {k:6s} fills={v['fills']} shares={v['shares']} P&L=${v['pnl']:.2f} "
+            f"fees=${v['fees']:.2f} rebates=${v['rebates']:.2f} "
+            f"edge@fill={_fmt(v['avg_edge_at_fill'])} "
+            f"markout(adverse<0) 1={_fmt(v['markout_1_avg'])} 2={_fmt(v['markout_2_avg'])}")
+    L += ["", "by market:"] + [f"  {k}: ${v:.2f}" for k, v in r["by_market"].items()]
+    L += ["", "by day (UTC):"] + [f"  {k}: ${v:.2f}" for k, v in sorted(r["by_day"].items())]
+    return "\n".join(L)

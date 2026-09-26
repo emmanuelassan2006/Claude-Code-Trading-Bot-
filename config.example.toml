@@ -1,7 +1,7 @@
 # Copy to config.toml and edit. Every key is optional; omitted keys use the
 # defaults in pmbot/config.py. Secrets do NOT go here - they go in .env.
 
-dry_run = true          # Phase 1 never trades regardless.
+dry_run = true          # live needs dry_run = false AND `pmbot run --live` (not built yet)
 
 [fees]                  # docs.polymarket.us/fees
 taker_rate = 0.06       # taker fee = rate * shares * p * (1 - p)
@@ -12,8 +12,8 @@ rounding_mode = "half_even"  # banker's rounding, per fill
 cap_cumulative = true        # multi-fill taker orders capped at round(total exact fee)
 
 [markets]
-assets = ["BTC", "ETH", "SOL", "XRP"]
-durations = ["5m", "15m", "1h"]
+assets = ["BTC"]                 # Polymarket US lists BTC Up/Down only (2026-09-26)
+durations = ["15m", "1h"]        # no 5m windows on Polymarket US
 search_queries = ["up or down"]
 title_keywords = ["up or down", "updown"]
 tick_size = 0.01
@@ -65,3 +65,62 @@ log_dir = "logs"
 log_max_bytes = 20000000
 log_backups = 10
 kill_file = "KILL"
+
+[strategy]                   # fair-value market making + opportunistic taking
+maker_enabled = true
+taker_enabled = true
+vol_lookback_s = 1800.0
+vol_sample_s = 5.0
+vol_min_returns = 30
+vol_floor_annual = 0.20
+vol_cap_annual = 2.50
+vol_uncertainty = 0.25
+price_uncertainty_bps = 3.0
+use_all_ptb_candidates = true
+max_feed_age_s = 5.0
+quote_size = 10              # shares per side, x trade_scale
+min_half_spread = 0.01
+model_margin = 0.01
+quote_horizon_s = 5.0
+spread_vol_mult = 1.0
+inventory_skew_per_share = 0.001
+quote_price_min = 0.05
+quote_price_max = 0.95
+quote_start_after_open_s = 5.0
+requote_min_interval_s = 0.5
+keep_min_edge = 0.005
+requote_improve_ticks = 2
+taker_min_edge = 0.02        # per share, after the taker fee
+taker_max_shares = 20
+taker_price_min = 0.02
+taker_price_max = 0.98
+taker_cooldown_s = 2.0
+
+[strategy.settle_twap_s]     # UNVERIFIED for US; 0 = settle on last price
+15m = 60
+1h = 60
+
+[strategy.quote_stop_before_close_s]
+15m = 60
+1h = 90
+
+[risk]                       # enforced outside the strategy
+max_window_exposure = 20     # worst-case loss $ per window (incl. resting orders)
+max_total_exposure = 60
+daily_loss_limit = 20        # halts until next UTC day
+daily_take_profit = 0        # 0 = off
+window_take_profit = 5       # lock the window (stop trading it)
+window_stop_loss = 10
+entry_cutoff_s = 30          # no orders in the final 30 s; cancel all
+max_orders_per_min = 60
+max_cancels_per_min = 60
+max_actions_per_s = 4.0
+
+[sizing]
+base_window_budget = 20
+trade_scale = 1.0            # scales quote size, taker size and window budget
+paper_balance = 100
+
+[sim]
+latency_ms = 150.0
+markout_s = [10.0, 60.0]
