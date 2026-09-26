@@ -26,6 +26,7 @@ log = logging.getLogger("pmbot")
 
 async def _run_monitor(cfg_path: str, verbose: bool, paper: bool = False) -> int:
     from pmbot.feeds.chainlink import ChainlinkFeed
+    from pmbot.feeds.exchanges import ExchangeFeed
     from pmbot.marketdata import MarketDataStream, PublicAPI
     from pmbot.monitor import Monitor
 
@@ -39,7 +40,8 @@ async def _run_monitor(cfg_path: str, verbose: bool, paper: bool = False) -> int
         return 2
     store = Store(cfg.paths.db_path, mode="monitor")
     public = PublicAPI(cfg.api)
-    feed = ChainlinkFeed(cfg.chainlink, cfg.api)
+    feed = ChainlinkFeed(cfg.price_feed, cfg.api) if cfg.price_feed.source == "rtds" \
+        else ExchangeFeed(cfg.price_feed, cfg.api)
     monitor = Monitor(cfg, secrets, store, public, feed=feed)
     engine_store = None
     if paper:
@@ -69,7 +71,7 @@ async def _run_monitor(cfg_path: str, verbose: bool, paper: bool = False) -> int
 
     log.info("%s starting. api_key=%s price_feed=%s",
              "PAPER TRADING (dry run, simulated orders only)" if paper else "monitor (no trading)",
-             "yes" if secrets.has_api_key else "no", cfg.chainlink.source)
+             "yes" if secrets.has_api_key else "no", cfg.price_feed.source)
     store.log_event("info", "start", "monitor")
     tasks = [
         asyncio.create_task(monitor.discovery_loop(stop)),

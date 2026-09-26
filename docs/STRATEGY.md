@@ -17,18 +17,23 @@ motion, so
 
     P(Up) = Φ((E[settle] − K) / sd)
 
-Here `sd` comes from realized volatility of the Chainlink stream (30-minute
-lookback, clipped to 20%–250% annualized). If settlement is a TWAP over the
-final `w` seconds (polymarket.com uses 60 s for 15m windows; **unverified for
-US**, so it's configurable), the variance of the average is used instead:
+**Inputs:**
+- **K**, the price to beat: read from the API (`assetPriceTerms.priceToBeat`) as soon as the window opens.
+- **Spot:** a live composite of Coinbase and Kraken order-book mids, standing in for CF
+  Benchmarks' BRTI, which the market settles on.
+- **Volatility:** realized volatility of that composite (30-minute lookback, clipped to 20%–250% annualized).
+
+Settlement is the average of 60 BRTI prices in the final minute (verified from the
+market rules), so the variance of the average is used instead of a point price:
 `σ²S²(τ − 2w/3)` before the averaging window, and
 `σ²S²τ³/(3w²)` around the already-realized part inside it
 (`pmbot/model.py`).
 
 The model returns a **band** [low, high], not a point. The band covers
-volatility error (±25%), feed lag/basis (±3 bps), and every candidate
-price-to-beat rule until the monitor proves which one Polymarket US uses. It
-also returns `p_sd`, how far P(Up) typically moves over 5 s.
+volatility error (±25%) and our feed's basis/lag versus BRTI (±3 bps; the monitor
+measures the real basis against `priceToBeat`). Before the API publishes K, the
+band also spans the candidate price-to-beat estimates. The model also returns `p_sd`, how far
+P(Up) typically moves over 5 s.
 
 ## Maker quotes (main component)
 
@@ -49,7 +54,7 @@ also returns `p_sd`, how far P(Up) typically moves over 5 s.
 
 ## Taker (secondary component)
 
-When the book is clearly through the band after the taker fee (`0.06·p(1−p)`),
+When the book is clearly through the band after the taker fee (`0.0695·p(1−p)` on these markets),
 buy asks ≤ `low − fee − 2¢` or sell bids ≥ `high + fee + 2¢`. Walk levels while
 the edge holds, max 20 shares per signal, 2 s cooldown. This catches books that
 lag BTC moves. Fees are smallest near 0 and 1, so late-window mispricings are
@@ -89,7 +94,11 @@ the exposure caps above.
 
 ## Known limitations
 
-- Price-to-beat and settlement rules are unverified for US. The monitor scores the candidate rules against settlements. Set `ptb_rule` and `settle_twap_s` once the data is in.
+- The live book is only 1–2¢ wide with real depth, so other market makers are active. Our
+  quotes will usually sit outside the best bid/offer and fill mainly on bigger moves. Watch the markouts:
+  if they're negative, the maker side isn't worth running. The taker side depends on
+  our BRTI proxy being faster or more accurate than the book.
+- BRTI isn't streamed for free; the Coinbase + Kraken composite is a proxy.
 - The recorded data is 1 Hz top-of-book, so backtests see less depth and more delay than live paper trading.
 - Paper maker fills need a trade *through* our price, which understates fills at our exact price (conservative).
 - Live execution (Phase 3) still needs the order translation (buy Up vs short/close) and startup reconciliation.

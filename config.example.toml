@@ -4,7 +4,7 @@
 dry_run = true          # live needs dry_run = false AND `pmbot run --live` (not built yet)
 
 [fees]                  # docs.polymarket.us/fees
-taker_rate = 0.06       # taker fee = rate * shares * p * (1 - p)
+taker_rate = 0.0695     # taker fee = rate * shares * p * (1 - p); live feeCoefficient
 maker_fee_rate = 0.0
 maker_rebate_rate = 0.0125   # UNVERIFIED: sources say 0.0125 or 25% of taker (0.015)
 rounding_increment = 0.01
@@ -31,24 +31,24 @@ book_poll_interval_s = 2.0   # REST fallback when the WebSocket is down
 ws_stale_after_s = 30.0
 settlement_poll_s = 900.0
 
-[chainlink]
-source = "rtds"              # "rtds" (public relay) or "none"
-rtds_url = "wss://ws-live-data.polymarket.com"
-rtds_topic = "crypto_prices_chainlink"
-ptb_rule = "twap_ending"
+[price_feed]                 # reference BTC price (proxy for CF Benchmarks BRTI)
+source = "exchanges"         # "exchanges" (Coinbase+Kraken mids), "rtds" (Chainlink relay), "none"
+coinbase_url = "wss://ws-feed.exchange.coinbase.com"
+kraken_url = "wss://ws.kraken.com/v2"
+sample_interval_s = 0.5
+source_stale_s = 5.0
+ptb_rule = "twap_ending"     # fallback only; the API publishes priceToBeat
 history_s = 7200.0
 
-[chainlink.symbols]
-BTC = "btc/usd"
-ETH = "eth/usd"
-SOL = "sol/usd"
-XRP = "xrp/usd"
+[price_feed.coinbase_products]
+BTC = "BTC-USD"
 
-[chainlink.twap_window_s]
-5m = 30
+[price_feed.kraken_symbols]
+BTC = "BTC/USD"
+
+[price_feed.twap_window_s]   # BRTI: average of 60 prices in the minute before
 15m = 60
 1h = 60
-4h = 60
 
 [api]
 gateway_url = "https://gateway.polymarket.us"
@@ -96,7 +96,7 @@ taker_price_min = 0.02
 taker_price_max = 0.98
 taker_cooldown_s = 2.0
 
-[strategy.settle_twap_s]     # UNVERIFIED for US; 0 = settle on last price
+[strategy.settle_twap_s]     # verified: 60 BRTI prices in the final minute
 15m = 60
 1h = 60
 

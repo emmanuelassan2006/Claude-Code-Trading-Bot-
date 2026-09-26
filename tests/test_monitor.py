@@ -3,7 +3,7 @@ import json
 from decimal import Decimal as D
 
 from pmbot.config import Config, load_secrets
-from pmbot.discovery import Window
+from pmbot.discovery import Window, parse_ts
 from pmbot.feeds.chainlink import ChainlinkFeed, Tick
 from pmbot.monitor import Monitor, outcome_from_settlement
 from pmbot.store import Store
@@ -47,7 +47,7 @@ def make(structure="pair", settlement=None):
     cfg = Config()
     cfg.monitor.spread_sample_interval_s = 0
     store = Store(":memory:")
-    feed = ChainlinkFeed(cfg.chainlink, cfg.api)
+    feed = ChainlinkFeed(cfg.price_feed, cfg.api)
     mon = Monitor(cfg, load_secrets(None), store, FakePublic(settlement), FakeStream(), feed)
     if structure == "pair":
         w = Window("btc-w", "BTC", "5m", START, START + 300, "pair", "up", "down", True)
@@ -97,7 +97,7 @@ def test_single_book_samples_maker_edge_as_spread():
 def test_lifecycle_refs_close_and_settlement():
     mon, store, st, feed = make("pair", settlement=1)
     for i in range(-60, 400):
-        feed.history["BTC"].add(Tick(START + i, 100.0 + (1 if i > 250 else 0)))
+        feed.history["BTC"].add(Tick(START + i, 100.0 + (1 if i > 230 else 0)))
     mon.on_book("up", md([(0.40, 5)], [(0.45, 30)]), START + 10, "ws")
     mon.on_book("down", md([(0.45, 5)], [(0.48, 12)]), START + 10, "ws")
     mon.tick_lifecycle(START + 70)
@@ -138,3 +138,48 @@ def test_description_fetched():
     mon, store, st, _ = make()
     asyncio.run(mon.fetch_description(st))
     assert "Chainlink" in store.query("SELECT description FROM windows")[0]["description"]
+
+
+class TermsPublic(FakePublic):
+    def __init__(self, terms):
+        super().__init__(None)
+        self.terms = terms
+
+    async def market(self, slug):
+        return self.terms
+
+
+def test_api_price_to_beat_and_settlement_price_drive_outcome():
+    from tests.test_exchanges import LIVE_MARKET
+    import copy
+
+    terms = copy.deepcopy(LIVE_MARKET)
+    cfg = Config()
+    store = Store(":memory:")
+    mon = Monitor(cfg, load_secrets(None), store, TermsPublic(terms), FakeStream())
+
+    class Eng:
+        def __init__(self):
+            self.windows, self.strikes, self.settled = {}, {}, {}
+
+        def add_window(self, w): self.windows[w.key] = w
+        def set_strike(self, k, v): self.strikes[k] = v
+        def on_settled(self, k, o, now): self.settled[k] = o
+        def update_window_times(self, k): pass
+        def tick(self, now): pass
+
+    mon.engine = Eng()
+    s = 1790000100.0
+    w = Window("btc-w", "BTC", "15m", s, s + 900, "single", "cpc-x", None, True)
+    st = mon.add_window(w)
+    asyncio.run(mon.fetch_market_terms(st, s + 1))
+    assert st.ptb_api == 83920.25 and mon.engine.strikes["btc-w"] == 83920.25
+    row = store.query("SELECT * FROM windows")[0]
+    assert row["ptb_api"] == 83920.25 and row["index_symbol"] == "BRTI"
+    # API window times override the slug-derived ones
+    assert w.start_ts == parse_ts("2026-09-26T03:15:00Z")
+    st.closed = True
+    terms["assetPriceTerms"]["settlementPrice"] = {"value": "83950.00"}
+    asyncio.run(mon.fetch_market_terms(st, w.end_ts + 20))
+    assert st.settled and mon.engine.settled["btc-w"] == "up"
+    assert store.query("SELECT outcome FROM windows")[0]["outcome"] == "up"

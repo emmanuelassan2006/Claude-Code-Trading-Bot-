@@ -25,6 +25,23 @@ marked **UNVERIFIED** must be confirmed (e.g. with `scripts/probe_markets.py`).
 - Book prices come back with 4 decimals (e.g. `0.9740`), so ticks may be finer than $0.01.
 - Public gateway GETs work unauthenticated from a US residential connection.
 
+## 0b. CONFIRMED from market detail (owner's probe, 2026-09-26)
+
+`GET /v1/market/slug/cpc-btc-updown-15m-...` returns:
+- **Resolution source: CF Benchmarks Bitcoin Real-Time Index (BRTI)**, not Chainlink.
+  The start and end prices are each "the simple average of 60 BRTI prices
+  collected in the last minute before" that time, rounded to 2 decimals. Up wins if end ≥ start.
+- **`assetPriceTerms.priceToBeat`** is published as soon as the window opens (83920.25 in the
+  sample). `assetPriceTerms.settlementPrice` is populated after close, and
+  `windowStart`/`windowEnd` give exact timing. The bot now uses these directly.
+- **`feeCoefficient: 0.0695`** on BTC Up/Down (the docs example uses 0.06), so the default taker rate is now 0.0695.
+- `orderPriceMinTickSize: 0.01`, `minimumTradeQty: 0.01`.
+- `marketSides`: `long: true` = "Yes" = **Up**.
+- Live book at the time: 15-minute 0.54 bid / 0.55 ask with hundreds of shares
+  per level; 60-minute 0.20 / 0.22. The book is competitive (1–2¢ wide).
+- Still open: BRTI itself isn't freely streamed. The bot uses a Coinbase + Kraken mid
+  composite as a proxy, and the monitor reports its basis against `priceToBeat`.
+
 ## 1. The finding that changes the design: one book per market
 
 Polymarket US is a CFTC DCM with a **single instrument per market** (the YES /

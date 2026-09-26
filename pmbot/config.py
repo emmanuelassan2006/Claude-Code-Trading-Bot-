@@ -17,8 +17,10 @@ from typing import Any
 
 @dataclass
 class FeeConfig:
-    # Taker fee = taker_rate * shares * p * (1 - p)   (docs.polymarket.us/fees)
-    taker_rate: Decimal = Decimal("0.06")
+    # Taker fee = taker_rate * shares * p * (1 - p). The docs say 0.06, but the
+    # live BTC Up/Down markets report feeCoefficient = 0.0695 (2026-09-26); the
+    # monitor warns if a market's coefficient differs from this value.
+    taker_rate: Decimal = Decimal("0.0695")
     # Makers pay no fee.
     maker_fee_rate: Decimal = Decimal("0")
     # Maker rebate = maker_rebate_rate * shares * p * (1 - p). Sources disagree:
@@ -41,7 +43,7 @@ class MarketsConfig:
     title_keywords: list[str] = field(default_factory=lambda: ["up or down", "updown"])
     # Default tick if a market does not tell us otherwise (contract spec: 0.001-0.01).
     tick_size: Decimal = Decimal("0.01")
-    min_order_size: int = 1  # UNVERIFIED for Polymarket US
+    min_order_size: int = 1  # markets report minimumTradeQty 0.01; we use whole shares
     discovery_interval_s: float = 20.0
     # Subscribe to windows that start within this many seconds.
     lookahead_s: float = 120.0
@@ -66,27 +68,34 @@ class MonitorConfig:
 
 
 @dataclass
-class ChainlinkConfig:
-    # "rtds": polymarket.com Real-Time Data Service relay of Chainlink streams
-    #         (public, read-only; international infrastructure).
-    # "none": disabled.
-    source: str = "rtds"
+class PriceFeedConfig:
+    """Reference BTC price used for fair value.
+
+    Polymarket US Up/Down settles on CF Benchmarks' BRTI: the start and end prices
+    are each the simple average of 60 BRTI prices in the minute BEFORE the time,
+    rounded to cents. BRTI is computed from major USD exchanges, so the default
+    source is a live composite (median of mids) of Coinbase and Kraken.
+    """
+
+    # "exchanges" (Coinbase + Kraken composite), "rtds" (Chainlink relay), "none"
+    source: str = "exchanges"
+    coinbase_url: str = "wss://ws-feed.exchange.coinbase.com"
+    kraken_url: str = "wss://ws.kraken.com/v2"
+    coinbase_products: dict[str, str] = field(default_factory=lambda: {"BTC": "BTC-USD"})
+    kraken_symbols: dict[str, str] = field(default_factory=lambda: {"BTC": "BTC/USD"})
+    sample_interval_s: float = 0.5      # composite tick at most this often
+    source_stale_s: float = 5.0         # ignore an exchange quiet for longer
+    # RTDS (Chainlink relay) settings, used only when source = "rtds"
     rtds_url: str = "wss://ws-live-data.polymarket.com"
     rtds_topic: str = "crypto_prices_chainlink"
     symbols: dict[str, str] = field(
-        default_factory=lambda: {
-            "BTC": "btc/usd", "ETH": "eth/usd", "SOL": "sol/usd", "XRP": "xrp/usd",
-        }
-    )
-    # TWAP window (seconds) per duration; polymarket.com switched to TWAP
-    # settlement on 2026-08-07. Whether Polymarket US does is UNVERIFIED, so the
-    # monitor records several candidate rules and scores them against settlement.
+        default_factory=lambda: {"BTC": "btc/usd", "ETH": "eth/usd", "SOL": "sol/usd",
+                                 "XRP": "xrp/usd"})
+    # Reference-price averaging window (s) at open/close: 60 s ending at the time.
     twap_window_s: dict[str, float] = field(
-        default_factory=lambda: {"5m": 30, "15m": 60, "1h": 60, "4h": 60}
-    )
+        default_factory=lambda: {"5m": 60, "15m": 60, "1h": 60, "4h": 60})
     history_s: float = 7200.0
-    # Which candidate rule to show as "the" price to beat in live samples.
-    # One of: twap_ending, twap_starting, first_tick_after, last_tick_before.
+    # Fallback price-to-beat rule when the API has not published priceToBeat yet.
     ptb_rule: str = "twap_ending"
 
 
@@ -110,7 +119,8 @@ class StrategyConfig:
     taker_enabled: bool = True
     # --- fair value model ---
     # Settlement average window (s) per duration; 0 = settle on the last price.
-    # UNVERIFIED for Polymarket US (polymarket.com uses 60 s TWAP for 15m).
+    # Polymarket US: 60 BRTI prices in the final minute, simple average (verified
+    # from the market description, 2026-09-26).
     settle_twap_s: dict[str, float] = field(default_factory=lambda: {"15m": 60, "1h": 60})
     vol_lookback_s: float = 1800.0
     vol_sample_s: float = 5.0
@@ -194,7 +204,7 @@ class Config:
     fees: FeeConfig = field(default_factory=FeeConfig)
     markets: MarketsConfig = field(default_factory=MarketsConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
-    chainlink: ChainlinkConfig = field(default_factory=ChainlinkConfig)
+    price_feed: PriceFeedConfig = field(default_factory=PriceFeedConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)

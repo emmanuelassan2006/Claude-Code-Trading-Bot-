@@ -4,7 +4,7 @@ from pmbot.book import Level, OrderBook, WindowBooks
 from pmbot.config import FeeConfig
 from pmbot.edge import maker_pair_edge, marginal_pair_cost, quote_taker_pair
 
-CFG = FeeConfig()
+CFG = FeeConfig(taker_rate=D("0.06"))
 
 
 def md(bids, asks):

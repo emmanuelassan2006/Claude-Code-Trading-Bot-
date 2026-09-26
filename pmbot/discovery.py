@@ -219,3 +219,36 @@ class Discoverer:
         for k in [k for k, w in self.known.items() if w.end_ts < now - 3600]:
             del self.known[k]
         return new
+
+
+def parse_market_terms(market: dict[str, Any]) -> dict[str, Any]:
+    """Pull the authoritative terms out of a /v1/market/slug/{slug} `market` object.
+
+    Observed on live BTC Up/Down markets (2026-09-26): assetPriceTerms carries
+    priceToBeat, settlementPrice, windowStart/windowEnd and indexSymbol (BRTI);
+    the market carries feeCoefficient, orderPriceMinTickSize, minimumTradeQty
+    and marketSides (long=True is "Yes" = Up).
+    """
+    def num(x: Any) -> float | None:
+        if isinstance(x, dict):
+            x = x.get("value")
+        try:
+            return float(x) if x not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    t = market.get("assetPriceTerms") or {}
+    long_desc = next((s.get("description") for s in market.get("marketSides") or []
+                      if s.get("long") is True), None)
+    return {
+        "ptb": num(t.get("priceToBeat")),
+        "settle": num(t.get("settlementPrice")),
+        "window_start": parse_ts(t.get("windowStart")),
+        "window_end": parse_ts(t.get("windowEnd")),
+        "index_symbol": t.get("indexSymbol"),
+        "fee_coefficient": num(market.get("feeCoefficient")),
+        "tick": num(market.get("orderPriceMinTickSize")),
+        "min_qty": num(market.get("minimumTradeQty")),
+        "long_side": long_desc,
+        "description": market.get("description"),
+    }

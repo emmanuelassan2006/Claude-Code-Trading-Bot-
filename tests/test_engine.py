@@ -8,7 +8,7 @@ from pmbot.book import Level
 from pmbot.config import Config
 from pmbot.discovery import Window
 from pmbot.engine import TradingEngine
-from pmbot.feeds.chainlink import PriceHistory, Tick
+from pmbot.feeds.history import PriceHistory, Tick
 from pmbot.model import annual_to_ps
 from pmbot.reports import build_strategy_report, render_strategy_text
 from pmbot.store import Store
@@ -156,7 +156,7 @@ def _synthetic_monitor_db(path):
                             "up_ask": round(mid + 0.02, 2), "up_ask_qty": 50,
                             "down_bid": None, "down_bid_qty": None, "down_ask": None,
                             "down_ask_qty": None, "taker_cost": None, "maker_edge": None,
-                            "chainlink": prices[t], "ptb": None})
+                            "ref_price": prices[t], "ptb": None})
             if t >= s and rng.random() < 0.3:
                 tp = round(fair + rng.gauss(0, 0.03), 2)
                 src.add_trade({"ts": t + 0.5, "recv_ts": t + 0.5, "window_key": key,

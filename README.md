@@ -8,7 +8,9 @@ This code cannot place, modify or cancel real orders. There are no trading
 endpoints in it at all.** Live order submission (Phase 3) comes after review.
 
 What Polymarket US actually lists (confirmed 2026-09-26): **BTC Up/Down, 15-minute
-and 60-minute windows only**, each a single market. The strategy is
+and 60-minute windows only**, each a single market. They settle on CF Benchmarks' BRTI (the average of 60 prices
+in the minute before the start and before the end). The API publishes the price to beat, and the taker fee
+coefficient is 0.0695. The strategy is
 fair-value market making plus opportunistic taking; see **`docs/STRATEGY.md`**.
 
 Read `docs/RESEARCH.md` first: it covers the API, fees, and one important
@@ -45,7 +47,7 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 
 | Command | What it does |
 |---|---|
-| `pmbot monitor [-v]` | Discover windows, subscribe to books + trades, stream Chainlink prices, record everything to SQLite. |
+| `pmbot monitor [-v]` | Discover windows, subscribe to books + trades, stream the BRTI-proxy BTC price (Coinbase + Kraken), record everything to SQLite. |
 | `pmbot run` | **Paper-trade** the strategy on live data (monitor + strategy + risk engine + simulated exchange). Logs a `SIZING` line before every simulated order. |
 | `pmbot run --live` | Refused: it requires `dry_run = false` in config **and** this flag, and live submission isn't built yet. |
 | `pmbot backtest [--since 24h] [--out file.db]` | Replay recorded monitor data through the exact same strategy and risk engine. |
@@ -58,10 +60,10 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 ### What the monitor records
 
 - **Taker gaps.** An episode is logged every time `ask_up + ask_down + taker fees < 1 - min_gap`. Each episode records max gap, executable size and profit (both ladders walked, rounded fees), depth on both sides, seconds to close, and how long it lasted (ms).
-- **Book samples** (1/s per window by default): best bid/ask and size on both sides, taker pair cost, maker edge `1 - bid_up - bid_down`, Chainlink price, and price to beat.
+- **Book samples** (1/s per window by default): best bid/ask and size on both sides, taker pair cost, maker edge `1 - bid_up - bid_down`, reference BTC price, and price to beat.
 - **Maker fill proxy** (in the report). For each moment the maker edge ≥ `--min-edge`, a quote joining both best bids counts as filled only if a later trade prints *through* the price within `--horizon` seconds. This is a conservative queue assumption. The report shows both-legs vs one-leg-only rates; one-leg-only is the leg risk.
 - **Trades** (the public tape).
-- **Price to beat.** No API returns it. At each window's open and close the monitor stores four candidate references from the Chainlink stream: first tick after, last tick before, TWAP ending at, and TWAP starting at the boundary. It then records the settlement. The report scores which rule matches reality.
+- **Price to beat and settlement.** Read from the API (`assetPriceTerms.priceToBeat` and `settlementPrice`). The monitor also computes our own 60-second average at each boundary from the price feed, and the report shows the basis versus the official values.
 
 ## Configuration
 
@@ -91,7 +93,9 @@ pmbot/book.py        local books; Up/Down views for single- or two-market window
 pmbot/edge.py        taker pair quote (walks both ladders), maker pair edge
 pmbot/discovery.py   window discovery + classification (asset, duration, layout)
 pmbot/marketdata.py  read-only gateway REST + markets WebSocket (reconnect, REST fallback)
-pmbot/feeds/chainlink.py  live Chainlink stream, TWAP, price-to-beat candidates
+pmbot/feeds/exchanges.py  Coinbase + Kraken composite (BRTI proxy)
+pmbot/feeds/history.py    price history, TWAP, candidate references
+pmbot/feeds/chainlink.py  optional Chainlink relay (not the settlement source)
 pmbot/monitor.py     Phase 1 engine (evaluates on every book update)
 pmbot/store.py       SQLite
 pmbot/model.py       fair value P(Up) (digital option, TWAP-aware) + realized vol

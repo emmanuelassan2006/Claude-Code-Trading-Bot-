@@ -17,7 +17,7 @@ from typing import Any
 from pmbot.book import Level
 from pmbot.config import Config
 from pmbot.discovery import Window
-from pmbot.feeds.chainlink import PriceHistory
+from pmbot.feeds.history import PriceHistory
 from pmbot.model import FairValue, annual_to_ps, fair_value, realized_vol_ps
 from pmbot.risk import RiskEngine
 from pmbot.sim import PaperExchange, SimOrder
@@ -41,6 +41,7 @@ class EngineWindow:
     last_take: dict[str, float] = field(default_factory=dict)
     closed: bool = False
     cutoff_done: bool = False
+    strike_fixed: bool = False        # True once the API's priceToBeat is known
     stats: dict[str, Any] = field(default_factory=lambda: defaultdict(lambda: ZERO))
     note: str = ""
 
@@ -73,6 +74,19 @@ class TradingEngine:
             return
         self.windows[w.key] = EngineWindow(w)
         self.risk.register_window(w.key, w.end_ts)
+
+    def set_strike(self, key: str, value: float) -> None:
+        """Use the exchange's published price to beat instead of our estimate."""
+        ew = self.windows.get(key)
+        if ew is not None:
+            ew.strikes = [float(value)]
+            ew.strike_fixed = True
+
+    def update_window_times(self, key: str) -> None:
+        ew = self.windows.get(key)
+        wr = self.risk.windows.get(key)
+        if ew is not None and wr is not None:
+            wr.end_ts = ew.window.end_ts
 
     def on_book(self, key: str, bids: list[Level], asks: list[Level], now: float) -> None:
         ew = self.windows.get(key)
@@ -172,13 +186,13 @@ class TradingEngine:
         h = self.histories.get(ew.window.asset)
         if h is None:
             return []
-        tw = float(self.cfg.chainlink.twap_window_s.get(ew.window.duration, 30))
+        tw = float(self.cfg.price_feed.twap_window_s.get(ew.window.duration, 30))
         cands = h.candidates(ew.window.start_ts, tw)
-        primary = cands.get(self.cfg.chainlink.ptb_rule)
+        primary = cands.get(self.cfg.price_feed.ptb_rule)
         if primary is None:
             return []
         others = [cands[r] for r in PTB_RULES
-                  if r != self.cfg.chainlink.ptb_rule and cands.get(r) is not None]
+                  if r != self.cfg.price_feed.ptb_rule and cands.get(r) is not None]
         return [primary] + (others if self.cfg.strategy.use_all_ptb_candidates else [])
 
     def _sigma(self, asset: str, now: float) -> float | None:
@@ -208,8 +222,10 @@ class TradingEngine:
         if now < w.start_ts:
             ew.note = "window not open"
             return None
-        tw = float(self.cfg.chainlink.twap_window_s.get(w.duration, 30))
-        if len(ew.strikes) < len(PTB_RULES) and now <= w.start_ts + tw + 5:
+        tw = float(self.cfg.price_feed.twap_window_s.get(w.duration, 30))
+        if ew.strike_fixed:
+            pass
+        elif len(ew.strikes) < len(PTB_RULES) and now <= w.start_ts + tw + 5:
             ew.strikes = self._strikes(ew) or ew.strikes
         elif not ew.strikes:
             ew.strikes = self._strikes(ew)

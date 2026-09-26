@@ -165,6 +165,17 @@ def build_report(store: Store, since: float | None = None, min_edge: float = 0.0
             "taker_intents": dict(taker_intents),
         })
 
+    basis = []
+    for w in windows:
+        if w.get("ptb_api") is not None and w.get("open_ref"):
+            ref = json.loads(w["open_ref"]).get("twap_ending")
+            if ref is not None:
+                basis.append(ref - w["ptb_api"])
+    out["proxy_basis"] = {
+        "n": len(basis),
+        "median": _q(basis, 0.5),
+        "abs_p90": _q([abs(b) for b in basis], 0.9),
+    }
     out["ptb_rules"] = {
         r: {"correct": h[0], "n": h[1], "accuracy_pct": 100.0 * h[0] / h[1] if h[1] else None}
         for r, h in sorted(rule_hits.items())
@@ -197,9 +208,12 @@ def render_text(rep: dict[str, Any], min_edge: float, horizon_s: float) -> str:
             f"both={_fmt(g['maker_both_filled_pct'], 1)}% one-leg={_fmt(g['maker_one_leg_only_pct'], 1)}%",
             f"  trades={g['trades']} taker intents={g['taker_intents']}",
         ]
-    lines += ["", "Price-to-beat rule accuracy vs settlement:"]
+    pb = rep.get("proxy_basis") or {}
+    lines += ["", f"Price-feed basis vs API priceToBeat (our 60 s average - BRTI): n={pb.get('n', 0)} "
+              f"median=${_fmt(pb.get('median'), 2)} |p90|=${_fmt(pb.get('abs_p90'), 2)}"]
+    lines += ["", "Price-to-beat rule accuracy vs settlement (our feed):"]
     if not rep["ptb_rules"]:
-        lines.append("  (no settled windows with Chainlink data yet)")
+        lines.append("  (no settled windows with price-feed data yet)")
     for r, v in rep["ptb_rules"].items():
         lines.append(f"  {r:18s} {v['correct']}/{v['n']} = {_fmt(v['accuracy_pct'], 1)}%")
     return "\n".join(lines)

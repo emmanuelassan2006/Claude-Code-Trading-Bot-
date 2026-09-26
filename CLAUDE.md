@@ -3,12 +3,14 @@
 Personal trading bot for **Polymarket US** (CFTC DCM, `*.polymarket.us`,
 Ed25519 API keys via the official `polymarket-us` SDK). This is **not**
 polymarket.com, so do not use Polygon wallets, private keys, USDC, the CTF, the
-CLOB client or Gamma patterns for trading. (`pmbot/wallet.py` and the Chainlink
+CLOB client or Gamma patterns for trading. (`pmbot/wallet.py` and the optional Chainlink
 RTDS relay read polymarket.com *public data* only.)
 
 ## Phase status
 - Phase 1 (monitor + research): built. Live probe confirmed that US lists **BTC 15m and 60m
-  Up/Down only, one market per window** (no 5m, no other assets).
+  Up/Down only, one market per window** (no 5m, no other assets). They settle on **CF Benchmarks BRTI**
+  (60-price average in the minute before start/end). The API gives `assetPriceTerms.priceToBeat`
+  / `settlementPrice`, and `feeCoefficient` = 0.0695. The price feed is a Coinbase+Kraken BRTI proxy.
 - Phase 2: strategy (`docs/STRATEGY.md`), risk engine, sizing, paper exchange, ledger,
   backtester and reports are **built and awaiting owner review**. Telegram is not built yet.
 - Phase 3 (live order submission, reconciliation): not started.
@@ -19,7 +21,8 @@ RTDS relay read polymarket.com *public data* only.)
 - `fees.py`: the **only** fee function. Every edge calculation and the simulator must use it.
 - `book.py`: books and Up/Down views. A window is "single" (one YES book; Down = short) or "pair" (two books).
 - `edge.py`: taker pair quote and maker pair edge.
-- `discovery.py`, `marketdata.py`, `feeds/chainlink.py`, then `monitor.py` (evaluates on every book update), which writes to `store.py` (SQLite, `mode` column).
+- `discovery.py`, `marketdata.py`, `feeds/exchanges.py` (default BRTI proxy; `feeds/chainlink.py` is
+  optional), then `monitor.py` (evaluates on every book update), which writes to `store.py` (SQLite, `mode` column).
 - `model.py` (fair value), `strategy.py` (proposes quotes and takes), `risk.py` (decides), `sim.py`
   (paper exchange), `engine.py` (wires them; the same code path for paper/backtest/live), `backtest.py`.
 - `reports.py`, `wallet.py`, `cli.py`.

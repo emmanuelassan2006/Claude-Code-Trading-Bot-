@@ -1,7 +1,7 @@
 import math
 import random
 
-from pmbot.feeds.chainlink import PriceHistory, Tick
+from pmbot.feeds.history import PriceHistory, Tick
 from pmbot.model import annual_to_ps, fair_value, prob_up, realized_vol_ps
 
 SIG = annual_to_ps(0.5)

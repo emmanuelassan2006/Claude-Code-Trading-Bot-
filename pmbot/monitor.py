@@ -24,7 +24,7 @@ from typing import Any
 
 from pmbot.book import OrderBook, WindowBooks
 from pmbot.config import Config, Secrets
-from pmbot.discovery import Discoverer, Window
+from pmbot.discovery import Discoverer, Window, parse_market_terms
 from pmbot.edge import maker_pair_edge, quote_taker_pair
 from pmbot.feeds.chainlink import ChainlinkFeed
 from pmbot.store import Store
@@ -61,10 +61,14 @@ class WindowState:
     closed: bool = False
     settled: bool = False
     next_settle_check: float = 0.0
+    next_terms_check: float = 0.0
+    ptb_api: float | None = None       # authoritative price to beat from the API
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ptb(self) -> float | None:
+        if self.ptb_api is not None:
+            return self.ptb_api
         return None if self.open_ref is None else self.extra.get("ptb")
 
 
@@ -91,6 +95,7 @@ class Monitor:
         self.feed = feed
         self.discoverer = Discoverer(cfg.markets, public.get)
         self.engine: Any = None  # optional TradingEngine (paper trading)
+        self.extra_warned: dict[str, bool] = {}
         self.windows: dict[str, WindowState] = {}
         self.by_slug: dict[str, tuple[WindowState, OrderBook]] = {}
 
@@ -118,13 +123,64 @@ class Monitor:
         return st
 
     async def fetch_description(self, st: WindowState) -> None:
+        await self.fetch_market_terms(st, time.time())
+
+    async def fetch_market_terms(self, st: WindowState, now: float) -> None:
+        """Read priceToBeat / settlementPrice / timing / fee terms from the API."""
+        w = st.window
         try:
-            m = await self.public.market(st.window.up_slug)
-            desc = m.get("description")
-            if desc:
-                self.store.update_window(st.window.key, description=desc)
+            m = await self.public.market(w.up_slug)
         except Exception as e:
-            log.warning("market detail %s failed: %s", st.window.up_slug, e)
+            log.warning("market detail %s failed: %s", w.up_slug, e)
+            return
+        t = parse_market_terms(m)
+        fields: dict[str, Any] = {k: v for k, v in {
+            "description": t["description"], "index_symbol": t["index_symbol"],
+            "fee_coefficient": t["fee_coefficient"], "tick": t["tick"],
+        }.items() if v is not None}
+        fc = t["fee_coefficient"]
+        if fc is not None and abs(fc - float(self.cfg.fees.taker_rate)) > 1e-9 \
+                and not self.extra_warned.get("fee"):
+            log.warning("market %s feeCoefficient=%s differs from config fees.taker_rate=%s",
+                        w.up_slug, fc, self.cfg.fees.taker_rate)
+            self.extra_warned["fee"] = True
+        for attr, key in (("start_ts", "window_start"), ("end_ts", "window_end")):
+            v = t[key]
+            if v is not None and abs(v - getattr(w, attr)) > 1:
+                log.warning("window %s %s corrected from API: %s -> %s", w.key, attr,
+                            getattr(w, attr), v)
+                setattr(w, attr, v)
+                fields[attr] = v
+                if self.engine is not None:
+                    self.engine.update_window_times(w.key)
+        if t["ptb"] is not None and st.ptb_api is None:
+            st.ptb_api = t["ptb"]
+            fields["ptb_api"] = t["ptb"]
+            log.info("price to beat %s = %s (API)", w.key, t["ptb"])
+            if self.engine is not None:
+                self.engine.set_strike(w.key, t["ptb"])
+        if t["settle"] is not None:
+            fields["settle_api"] = t["settle"]
+            if st.closed and not st.settled and st.ptb_api is not None:
+                outcome = "up" if t["settle"] >= st.ptb_api else "down"
+                st.settled = True
+                fields.update(outcome=outcome, settled_at=now)
+                log.info("settled %s close=%s ptb=%s outcome=%s (API settlementPrice)",
+                         w.key, t["settle"], st.ptb_api, outcome)
+                if self.engine is not None:
+                    self.engine.on_settled(w.key, outcome, now)
+        if fields:
+            self.store.update_window(w.key, **fields)
+
+    async def refresh_terms(self, now: float) -> None:
+        """Poll market terms until the price to beat and the settlement price appear."""
+        for st in list(self.windows.values()):
+            w = st.window
+            need_ptb = st.ptb_api is None and now >= w.start_ts
+            need_settle = st.closed and not st.settled
+            if (need_ptb or need_settle) and now >= st.next_terms_check:
+                st.next_terms_check = now + (5 if need_ptb else 15)
+                await self.fetch_market_terms(st, now)
 
     def _refs(self, st: WindowState, boundary: float) -> dict[str, float | None] | None:
         if self.feed is None:
@@ -132,16 +188,16 @@ class Monitor:
         hist = self.feed.history.get(st.window.asset)
         if hist is None:
             return None
-        tw = float(self.cfg.chainlink.twap_window_s.get(st.window.duration, 30))
+        tw = float(self.cfg.price_feed.twap_window_s.get(st.window.duration, 30))
         return hist.candidates(boundary, tw)
 
     def tick_lifecycle(self, now: float) -> None:
-        tw_max = max(self.cfg.chainlink.twap_window_s.values(), default=30)
+        tw_max = max(self.cfg.price_feed.twap_window_s.values(), default=30)
         for st in list(self.windows.values()):
             w = st.window
             if st.open_ref is None and now >= w.start_ts + tw_max + 2:
                 st.open_ref = self._refs(st, w.start_ts) or {}
-                st.extra["ptb"] = st.open_ref.get(self.cfg.chainlink.ptb_rule) or \
+                st.extra["ptb"] = st.open_ref.get(self.cfg.price_feed.ptb_rule) or \
                     st.open_ref.get("first_tick_after")
                 self.store.update_window(w.key, open_ref=st.open_ref)
             if not st.closed and now >= w.end_ts:
@@ -274,7 +330,7 @@ class Monitor:
                 "taker_cost": _f(q.top_cost),
                 "maker_edge": _f(maker_pair_edge(ubt.price if ubt else None,
                                                  dbt.price if dbt else None)),
-                "chainlink": price, "ptb": st.ptb,
+                "ref_price": price, "ptb": st.ptb,
             })
 
     def _close_gap(self, st: WindowState, now: float, ended_by: str) -> None:
@@ -317,6 +373,7 @@ class Monitor:
                 self.tick_lifecycle(now)
                 if self.engine is not None:
                     self.engine.tick(now)
+                await self.refresh_terms(now)
                 await self.check_settlements(now)
             except Exception as e:
                 log.exception("lifecycle error: %s", e)

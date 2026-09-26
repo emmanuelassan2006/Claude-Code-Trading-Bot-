@@ -20,7 +20,7 @@ from pmbot.book import Level
 from pmbot.config import Config
 from pmbot.discovery import Window
 from pmbot.engine import TradingEngine
-from pmbot.feeds.chainlink import PriceHistory, Tick
+from pmbot.feeds.history import PriceHistory, Tick
 from pmbot.store import Store
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def run_backtest(cfg: Config, src: Store, out: Store, since: float | None = None
     trades = [dict(r) for r in src.query(
         f"SELECT * FROM trades WHERE window_key IN ({qs}) ORDER BY ts", keys)]
 
-    histories = {a: PriceHistory(max_age_s=cfg.chainlink.history_s)
+    histories = {a: PriceHistory(max_age_s=cfg.price_feed.history_s)
                  for a in {w["asset"] for w in windows.values()}}
     engine = TradingEngine(cfg, out, histories, mode="backtest")
     added: set[str] = set()
@@ -82,8 +82,8 @@ def run_backtest(cfg: Config, src: Store, out: Store, since: float | None = None
             engine.tick(ts)
             last_tick = ts
         if kind == 0:
-            if row.get("chainlink") is not None:
-                histories[windows[key]["asset"]].add(Tick(ts, float(row["chainlink"])))
+            if row.get("ref_price") is not None:
+                histories[windows[key]["asset"]].add(Tick(ts, float(row["ref_price"])))
             engine.on_book(key, _lvl(row["up_bid"], row["up_bid_qty"]),
                            _lvl(row["up_ask"], row["up_ask_qty"]), ts)
         elif row.get("price") is not None and row.get("qty"):

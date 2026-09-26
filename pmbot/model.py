@@ -17,7 +17,7 @@ import bisect
 import math
 from dataclasses import dataclass
 
-from pmbot.feeds.chainlink import PriceHistory
+from pmbot.feeds.history import PriceHistory
 
 SECONDS_PER_YEAR = 365.0 * 24 * 3600
 

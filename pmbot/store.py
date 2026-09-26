@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS windows (
     settlement REAL,          -- raw settlement value for up_slug (YES)
     outcome TEXT,             -- 'up' | 'down' | NULL
     settled_at REAL,
-    first_seen REAL, finalized_at REAL
+    first_seen REAL, finalized_at REAL,
+    ptb_api REAL,             -- assetPriceTerms.priceToBeat (authoritative)
+    settle_api REAL,          -- assetPriceTerms.settlementPrice
+    index_symbol TEXT, fee_coefficient REAL, tick REAL
 );
 CREATE TABLE IF NOT EXISTS book_samples (
     ts REAL, mode TEXT, window_key TEXT, secs_to_close REAL,
@@ -31,7 +34,7 @@ CREATE TABLE IF NOT EXISTS book_samples (
     down_bid REAL, down_bid_qty REAL, down_ask REAL, down_ask_qty REAL,
     taker_cost REAL,          -- ask_up + ask_down + exact per-share taker fees
     maker_edge REAL,          -- 1 - bid_up - bid_down
-    chainlink REAL, ptb REAL
+    ref_price REAL, ptb REAL
 );
 CREATE INDEX IF NOT EXISTS ix_samples_window ON book_samples(window_key);
 CREATE TABLE IF NOT EXISTS taker_gaps (
@@ -88,7 +91,23 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.mode = mode
+
+    # columns added after the first release; ALTER existing databases in place
+    _ADDED = {
+        "windows": {"ptb_api": "REAL", "settle_api": "REAL", "index_symbol": "TEXT",
+                    "fee_coefficient": "REAL", "tick": "REAL"},
+        "book_samples": {"ref_price": "REAL"},
+    }
+
+    def _migrate(self) -> None:
+        for table, cols in self._ADDED.items():
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.commit()

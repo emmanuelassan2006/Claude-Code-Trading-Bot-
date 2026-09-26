@@ -6,7 +6,7 @@ from pmbot.config import FeeConfig
 from pmbot.fees import (exact_taker_fee, fill_cost, order_fee, round_money,
                         taker_fees_for_fills)
 
-CFG = FeeConfig()
+CFG = FeeConfig(taker_rate=D("0.06"))  # the documented worked examples use 0.06
 
 
 def test_docs_worked_example_100_at_50c():
@@ -23,6 +23,11 @@ def test_docs_worked_example_100_at_50c():
 ])
 def test_taker_fee_examples(shares, price, expected):
     assert fill_cost(shares, price, False, CFG) == expected
+
+
+def test_live_btc_updown_coefficient_0695():
+    # live BTC Up/Down markets report feeCoefficient 0.0695: 0.0695*100*0.25 = 1.7375
+    assert fill_cost(100, "0.50", False, FeeConfig()) == D("1.74")
 
 
 def test_bankers_rounding():
@@ -51,7 +56,7 @@ def test_multi_fill_cap_only_reduces():
 
 
 def test_cap_disabled():
-    cfg = FeeConfig(cap_cumulative=False)
+    cfg = FeeConfig(taker_rate=D("0.06"), cap_cumulative=False)
     assert order_fee([(1, "0.50")] * 3, False, cfg) == D("0.06")
 
 
@@ -62,7 +67,7 @@ def test_maker_pays_nothing_and_gets_rebate():
 
 
 def test_rates_come_from_config():
-    cfg = FeeConfig(taker_rate=D("0.10"))
+    cfg = FeeConfig(taker_rate=D("0.10"))  # explicit rate
     assert fill_cost(100, "0.50", False, cfg) == D("2.50")
 
 

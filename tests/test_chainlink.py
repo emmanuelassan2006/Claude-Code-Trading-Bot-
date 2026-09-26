@@ -1,6 +1,6 @@
 import json
 
-from pmbot.config import ApiConfig, ChainlinkConfig
+from pmbot.config import ApiConfig, PriceFeedConfig
 from pmbot.feeds.chainlink import ChainlinkFeed, PriceHistory, Tick, parse_rtds_message
 
 
@@ -51,7 +51,7 @@ def test_parse_rtds_update_and_snapshot():
 
 def test_feed_routes_ticks_to_assets():
     seen = []
-    f = ChainlinkFeed(ChainlinkConfig(), ApiConfig(), on_tick=lambda a, t: seen.append(a))
+    f = ChainlinkFeed(PriceFeedConfig(), ApiConfig(), on_tick=lambda a, t: seen.append(a))
     f.handle(json.dumps({"topic": "crypto_prices_chainlink",
                          "payload": {"symbol": "BTC/USD", "timestamp": 1, "value": 2}}))
     f.handle("PONG")
