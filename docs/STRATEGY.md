@@ -95,6 +95,20 @@ model's opinion has no edge.** Any remaining edge would have to come from (a) th
 fast BTC moves by more than the fee plus spread (lead-lag), or (b) market making around the mid for
 the 1¢ spread plus rebates. Neither is demonstrated yet. Do not build live execution on this strategy.
 
+## Lead-lag result (owner's data, 2026-09-26: 53 windows, 65,367 seconds)
+
+- Cross-correlation of 1 s moves (model fair vs book mid) peaks at **L = −1 s on the 15m
+  (the book moves ~1 s BEFORE our Coinbase/Kraken feed)** and at L = 0 on the 1h. There is no delay
+  at any positive L.
+- When the model had moved and the book had not, the book followed only 34–47% of the time.
+  Taking at the real ask/bid plus fee lost about 2¢/share at 10 s at every threshold, and lost to
+  resolution in all but one small bucket (1h, 77 signals, 10 windows: noise).
+
+**Conclusion: the book is not slow. The traders pricing it see BTC moves as fast as or
+faster than a home connection to Coinbase + Kraken.** Faster data (licensed BRTI, a VPS)
+could at best remove our ~1 s disadvantage; an edge would require being *ahead* of those
+traders. The lead-lag idea is closed.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every
