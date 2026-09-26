@@ -1,5 +1,5 @@
 """Command line: `pmbot monitor | run | backtest | report | calibrate | leadlag |
-longshot | ladder | analyze-tape | analyze-wallet | kill`.
+longshot | ladder | favorite | analyze-tape | analyze-wallet | kill`.
 
 No command can place, modify or cancel a real order: `run` paper-trades
 against a simulated exchange, and `run --live` is refused (Phase 3).
@@ -170,6 +170,13 @@ def main(argv: list[str] | None = None) -> int:
     lad.add_argument("--place-until", type=float, default=None,
                      help="stop placing new levels this many seconds into the window")
 
+    fav = sub.add_parser("favorite", help="does buying the favourite late in a window pay?")
+    fav.add_argument("--since", help="e.g. 24h, 7d, or ISO date")
+    fav.add_argument("--range", help="custom price range lo,hi (e.g. 0.85,0.97)")
+    fav.add_argument("--secs-left", help="custom entry times, comma-separated (e.g. 120,60)")
+    fav.add_argument("--shares", type=int, default=20, help="shares per entry (fee rounding)")
+    fav.add_argument("--out", help="also write every simulated entry to this CSV")
+
     sub.add_parser("kill", help="create the kill file (running processes stop)")
 
     args = p.parse_args(argv)
@@ -218,6 +225,25 @@ def main(argv: list[str] | None = None) -> int:
             from pmbot.patterns import longshot, render_longshot
 
             print(render_longshot(longshot(cfg, store, _parse_since(args.since))))
+            return 0
+        if args.cmd == "favorite":
+            from pmbot.patterns import favorite, render_favorite
+            from pmbot.reports import write_csv
+
+            ranges = None
+            if args.range:
+                lo, hi = (float(x) for x in args.range.split(","))
+                ranges = [(lo, hi)]
+            secs = None
+            if args.secs_left:
+                ts = [float(x) for x in args.secs_left.split(",")]
+                secs = {"15m": ts, "1h": ts}
+            res = favorite(cfg, store, _parse_since(args.since), ranges, secs, args.shares,
+                           float(cfg.risk.entry_cutoff_s))
+            print(render_favorite(res))
+            if args.out:
+                write_csv(Path(args.out), res["trades"])
+                print(f"entries CSV: {args.out}")
             return 0
         if args.cmd == "ladder":
             from pmbot.patterns import ladder, render_ladder

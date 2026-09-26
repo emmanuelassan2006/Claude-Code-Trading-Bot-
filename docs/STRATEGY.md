@@ -144,6 +144,12 @@ across many windows.
 The one consistent thread: **favourites (≥0.75–0.85) win slightly more often than priced**, in all three
 tests. This needs far more windows before it is trusted, because the risk is rare, large losses.
 
+`pmbot favorite` tests it directly: one entry per window, the first time a side's ask is in
+[lo, hi] with ≤ N s left (never in the final 30 s), at the ask plus the rounded taker fee, held to
+resolution. **Paper-trade only if** there are 100+ trades, the loss rate is clearly below break-even,
+t ≥ 2, the older and newer halves of the data are both positive, and ideally the edge survives the 95% upper
+bound on the loss rate. Several neighbouring rows must pass, not one cherry-picked configuration.
+
 ## Risk engine (cannot be overridden)
 
 Exposure is **worst-case loss at resolution** across the position and every

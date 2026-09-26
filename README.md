@@ -55,6 +55,7 @@ python scripts/probe_markets.py        # writes probe_output.json (no secrets)
 | `pmbot leadlag [--lookback 5] [--horizon 10]` | Does the book lag BTC moves? Cross-correlation by delay, plus simulated taker P&L (real ask/bid + fee) when the book hasn't caught up. No trading. |
 | `pmbot longshot [--since 24h]` | Do cheap (≤15¢) or late contracts win more often than their price? Win rate vs price by checkpoint, edge after the taker fee. No trading. |
 | `pmbot ladder [--levels 0.05,0.15,...] [--shares 1] [--place-until S]` | Replay a two-sided resting-bid ladder (the 98euf98a wallet pattern) on the recorded US tape: fills on trade-through, held to resolution. No trading. |
+| `pmbot favorite [--range 0.85,0.97] [--secs-left 120,60] [--shares 20] [--out file.csv]` | Buy the favourite once per window late, at the ask plus the rounded taker fee, and hold to resolution. Sweeps price ranges and entry times. Shows the loss rate vs break-even, a 95% worst-case loss rate, t-stat, and older-vs-newer half. No trading. |
 | `pmbot report --strategy [--since 24h]` | Paper-trading P&L by component, market and day; fees, rebates, markouts (adverse selection), carried inventory, drawdown. |
 | `pmbot report [--since 24h] [--min-edge 0.02] [--horizon 60] [--csv DIR] [--json]` | Gap/spread/fill-proxy/tape stats per asset and duration, plus price-to-beat rule accuracy. |
 | `pmbot analyze-tape [--out reports/tape.csv]` | Summarize the anonymous US trade tape. |

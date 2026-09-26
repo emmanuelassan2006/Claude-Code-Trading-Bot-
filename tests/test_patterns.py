@@ -136,3 +136,58 @@ def test_fill_breakdown_and_analyze_wallet(tmp_path):
     assert summary["total_pnl"] == 5.0          # -0.5 - 4.5 + 10
     assert summary["pnl_both_sides_markets"] == 5.0
     json.dumps(summary)
+
+
+def fav_store(windows):
+    """windows: list of (outcome, up_bid, up_ask) held flat for the whole 15m window."""
+    s = Store(":memory:")
+    for i, (outcome, bid, ask) in enumerate(windows):
+        key, start = f"w{i}", i * 900.0
+        s.upsert_window({"key": key, "asset": "BTC", "duration": "15m", "start_ts": start,
+                         "end_ts": start + 900, "structure": "single", "up_slug": "y",
+                         "down_slug": None, "long_is_up": 1, "title": "t"})
+        s.update_window(key, outcome=outcome)
+        for t in range(0, 900, 5):
+            s.add_sample({"ts": start + t, "window_key": key, "secs_to_close": 900 - t,
+                          "up_bid": bid, "up_bid_qty": 50, "up_ask": ask, "up_ask_qty": 5})
+    return s
+
+
+def test_favorite_one_entry_per_window_fee_and_side():
+    from pmbot.patterns import favorite_trades
+
+    s = fav_store([("up", 0.90, 0.92), ("up", 0.05, 0.07)])
+    tr = favorite_trades(CFG, s, lo=0.80, hi=0.97, secs_left=120, shares=20)
+    assert len(tr) == 2
+    up, down = sorted(tr, key=lambda t: t["window"])
+    assert up["side"] == "up" and up["price"] == 0.92 and up["won"] == 1
+    assert 115 <= up["secs_left"] <= 120
+    # fee: round(0.0695 * 20 * 0.92 * 0.08, 2) = 0.10 -> 0.005/share
+    assert abs(up["fee_per_share"] - 0.005) < 1e-9
+    assert abs(up["pnl_per_share"] - (1 - 0.92 - 0.005)) < 1e-9
+    # Down is the favourite at 1 - 0.05 = 0.95, and loses
+    assert down["side"] == "down" and down["price"] == 0.95 and down["won"] == 0
+
+
+def test_favorite_respects_cutoff_and_range():
+    from pmbot.patterns import favorite_trades
+
+    s = fav_store([("up", 0.60, 0.62)])
+    assert favorite_trades(CFG, s, lo=0.80, hi=0.97, secs_left=120) == []
+    s = fav_store([("up", 0.90, 0.92)])
+    assert favorite_trades(CFG, s, secs_left=20, cutoff_s=30) == []
+
+
+def test_favorite_stats_and_bound():
+    from pmbot.patterns import favorite, favorite_stats, loss_rate_upper, render_favorite
+
+    assert abs(loss_rate_upper(0, 100) - 0.0295) < 0.001      # ~3/n rule
+    assert loss_rate_upper(5, 10) > 0.5
+    s = fav_store([("up", 0.90, 0.92)] * 9 + [("down", 0.90, 0.92)])
+    st = favorite_stats(__import__("pmbot.patterns", fromlist=["x"]).favorite_trades(
+        CFG, s, secs_left=120), shares=20)
+    assert st["n"] == 10 and st["losses"] == 1
+    assert st["thin_top_pct"] == 100.0          # only 5 shares at the ask
+    assert st["edge_per_share"] < 0             # 90% wins at 0.925 all-in loses
+    res = favorite(CFG, s)
+    assert "15m" in res["groups"] and "b/e%" in render_favorite(res)
