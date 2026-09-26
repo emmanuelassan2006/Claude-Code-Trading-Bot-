@@ -375,7 +375,8 @@ def favorite_stats(trades: list[dict[str, Any]], shares: int = 20) -> dict[str, 
         "loss_rate": losses / n, "breakeven_loss_rate": breakeven_loss,
         "loss_rate_95_upper": ub,
         "edge_per_share": mean,
-        "t_stat": mean / (sd / math.sqrt(n)) if sd > 0 else None,
+        # with no losses (or no wins) the spread is only price noise and t is meaningless
+        "t_stat": mean / (sd / math.sqrt(n)) if sd > 0 and 0 < losses < n else None,
         "edge_at_upper_loss_rate": breakeven_loss - ub,   # >0 even in the bad case = robust
         "pnl_per_20_shares_total": mean * n * shares,
         "extra_losses_to_breakeven": (mean * n) / (price + fee),
@@ -442,6 +443,7 @@ def render_favorite(res: dict[str, Any]) -> str:
           "edge@ub = edge per share if the true loss rate were that bad; $/20sh = total P&L "
           "trading 20 shares each time; 1st/2nd half = edge in the older vs newer half of the "
           "windows; thin% = entries where the best ask had fewer than 20 shares.",
+          "t is blank when there were no losses (not measurable yet). "
           "Worth paper trading only if: many trades (100+), loss% clearly below b/e%, t >= 2, "
           "BOTH halves positive, and ideally edge@ub > 0. Configs overlap and were picked after "
           "looking at the data, so demand more than one good row."]

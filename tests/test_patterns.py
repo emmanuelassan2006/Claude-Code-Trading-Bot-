@@ -198,3 +198,10 @@ def test_favorite_renders_single_trade():
 
     out = render_favorite(favorite(CFG, fav_store([("up", 0.90, 0.92)])))
     assert "-/+0.075" in out
+
+
+def test_favorite_t_stat_blank_without_losses():
+    from pmbot.patterns import favorite_stats, favorite_trades
+
+    s = fav_store([("up", 0.90, 0.92), ("up", 0.93, 0.95)])
+    assert favorite_stats(favorite_trades(CFG, s))["t_stat"] is None
